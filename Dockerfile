@@ -1,4 +1,3 @@
-# Support setting various labels on the final image
 ARG COMMIT=""
 ARG VERSION=""
 ARG BUILDNUM=""
