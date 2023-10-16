@@ -1,4 +1,3 @@
-# Changelog
 ## v1.3.1
 FEATURE
 * [\#1881](https://github.com/bnb-chain/bsc/pull/1881) feat: active pbss
