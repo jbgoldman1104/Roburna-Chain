@@ -15,7 +15,9 @@
 */**/*dapps*
 build/_vendor/pkg
 /tests/truffle/storage
-
+data/*/node
+data/*/clef
+password.txt
 #*
 .#*
 *#
