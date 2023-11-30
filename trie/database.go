@@ -18,10 +18,8 @@ package trie
 
 import (
 	"errors"
-	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie/triedb/hashdb"
@@ -32,14 +30,10 @@ import (
 
 // Config defines all necessary options for database.
 type Config struct {
-	NoTries   bool
-	Preimages bool // Flag whether the preimage of node key is recorded
-	Cache     int
+	Preimages bool           // Flag whether the preimage of node key is recorded
+	IsVerkle  bool           // Flag whether the db is holding a verkle tree
 	HashDB    *hashdb.Config // Configs for hash-based scheme
 	PathDB    *pathdb.Config // Configs for experimental path-based scheme
-
-	// Testing hooks
-	OnCommit func(states *triestate.Set) // Hook invoked when commit is performed
 }
 
 // HashDefaults represents a config for using hash-based scheme with
@@ -59,9 +53,12 @@ type backend interface {
 	// according to the state scheme.
 	Initialized(genesisRoot common.Hash) bool
 
-	// Size returns the current storage size of the memory cache in front of the
-	// persistent database layer.
-	Size() (common.StorageSize, common.StorageSize, common.StorageSize)
+	// Size returns the current storage size of the diff layers on top of the
+	// disk layer and the storage size of the nodes cached in the disk layer.
+	//
+	// For hash scheme, there is no differentiation between diff layer nodes
+	// and dirty disk layer nodes, so both are merged into the second return.
+	Size() (common.StorageSize, common.StorageSize)
 
 	// Update performs a state transition by committing dirty nodes contained
 	// in the given set in order to update state from the specified parent to
@@ -89,40 +86,12 @@ type Database struct {
 	backend   backend        // The backend for managing trie nodes
 }
 
-// prepare initializes the database with provided configs, but the
-// database backend is still left as nil.
-func prepare(diskdb ethdb.Database, config *Config) *Database {
-	var preimages *preimageStore
-	if config != nil && config.Preimages {
-		preimages = newPreimageStore(diskdb)
-	}
-	return &Database{
-		config:    config,
-		diskdb:    diskdb,
-		preimages: preimages,
-	}
-}
-
 // NewDatabase initializes the trie database with default settings, note
 // the legacy hash-based scheme is used by default.
 func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 	// Sanitize the config and use the default one if it's not specified.
-	dbScheme := rawdb.ReadStateScheme(diskdb)
 	if config == nil {
-		if dbScheme == rawdb.PathScheme {
-			config = &Config{
-				PathDB: pathdb.Defaults,
-			}
-		} else {
-			config = HashDefaults
-		}
-	}
-	if config.PathDB == nil && config.HashDB == nil {
-		if dbScheme == rawdb.PathScheme {
-			config.PathDB = pathdb.Defaults
-		} else {
-			config.HashDB = hashdb.Defaults
-		}
+		config = HashDefaults
 	}
 	var preimages *preimageStore
 	if config.Preimages {
@@ -133,37 +102,15 @@ func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 		diskdb:    diskdb,
 		preimages: preimages,
 	}
-	/*
-	 * 1. First, initialize db according to the user config
-	 * 2. Second, initialize the db according to the scheme already used by db
-	 * 3. Last, use the default scheme, namely hash scheme
-	 */
-	if config.HashDB != nil {
-		if rawdb.ReadStateScheme(diskdb) == rawdb.PathScheme {
-			log.Warn("incompatible state scheme", "old", rawdb.PathScheme, "new", rawdb.HashScheme)
-		}
-		db.backend = hashdb.New(diskdb, config.HashDB, mptResolver{})
-	} else if config.PathDB != nil {
-		if rawdb.ReadStateScheme(diskdb) == rawdb.HashScheme {
-			log.Warn("incompatible state scheme", "old", rawdb.HashScheme, "new", rawdb.PathScheme)
-		}
-		db.backend = pathdb.New(diskdb, config.PathDB)
-	} else if strings.Compare(dbScheme, rawdb.PathScheme) == 0 {
-		if config.PathDB == nil {
-			config.PathDB = pathdb.Defaults
-		}
+	if config.HashDB != nil && config.PathDB != nil {
+		log.Crit("Both 'hash' and 'path' mode are configured")
+	}
+	if config.PathDB != nil {
 		db.backend = pathdb.New(diskdb, config.PathDB)
 	} else {
-		if config.HashDB == nil {
-			config.HashDB = hashdb.Defaults
-		}
 		db.backend = hashdb.New(diskdb, config.HashDB, mptResolver{})
 	}
 	return db
-}
-
-func (db *Database) Config() *Config {
-	return db.config
 }
 
 // Reader returns a reader for accessing all trie nodes with provided state root.
@@ -186,9 +133,6 @@ func (db *Database) Reader(blockRoot common.Hash) (Reader, error) {
 // The passed in maps(nodes, states) will be retained to avoid copying everything.
 // Therefore, these maps must not be changed afterwards.
 func (db *Database) Update(root common.Hash, parent common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *triestate.Set) error {
-	if db.config != nil && db.config.OnCommit != nil {
-		db.config.OnCommit(states)
-	}
 	if db.preimages != nil {
 		db.preimages.commit(false)
 	}
@@ -205,18 +149,19 @@ func (db *Database) Commit(root common.Hash, report bool) error {
 	return db.backend.Commit(root, report)
 }
 
-// Size returns the storage size of dirty trie nodes in front of the persistent
-// database and the size of cached preimages.
-func (db *Database) Size() (common.StorageSize, common.StorageSize, common.StorageSize, common.StorageSize) {
+// Size returns the storage size of diff layer nodes above the persistent disk
+// layer, the dirty nodes buffered within the disk layer, and the size of cached
+// preimages.
+func (db *Database) Size() (common.StorageSize, common.StorageSize, common.StorageSize) {
 	var (
-		diffs, nodes, immutablenodes common.StorageSize
-		preimages                    common.StorageSize
+		diffs, nodes common.StorageSize
+		preimages    common.StorageSize
 	)
-	diffs, nodes, immutablenodes = db.backend.Size()
+	diffs, nodes = db.backend.Size()
 	if db.preimages != nil {
 		preimages = db.preimages.size()
 	}
-	return diffs, nodes, immutablenodes, preimages
+	return diffs, nodes, preimages
 }
 
 // Initialized returns an indicator if the state data is already initialized
@@ -243,6 +188,15 @@ func (db *Database) WritePreimages() {
 	if db.preimages != nil {
 		db.preimages.commit(true)
 	}
+}
+
+// Preimage retrieves a cached trie node pre-image from memory. If it cannot be
+// found cached, the method queries the persistent database for the content.
+func (db *Database) Preimage(hash common.Hash) []byte {
+	if db.preimages == nil {
+		return nil
+	}
+	return db.preimages.preimage(hash)
 }
 
 // Cap iteratively flushes old but still referenced trie nodes until the total
@@ -320,15 +274,27 @@ func (db *Database) Recoverable(root common.Hash) (bool, error) {
 	return pdb.Recoverable(root), nil
 }
 
-// Reset wipes all available journal from the persistent database and discard
-// all caches and diff layers. Using the given root to create a new disk layer.
+// Disable deactivates the database and invalidates all available state layers
+// as stale to prevent access to the persistent state, which is in the syncing
+// stage.
+//
 // It's only supported by path-based database and will return an error for others.
-func (db *Database) Reset(root common.Hash) error {
+func (db *Database) Disable() error {
 	pdb, ok := db.backend.(*pathdb.Database)
 	if !ok {
 		return errors.New("not supported")
 	}
-	return pdb.Reset(root)
+	return pdb.Disable()
+}
+
+// Enable activates database and resets the state tree with the provided persistent
+// state root once the state sync is finished.
+func (db *Database) Enable(root common.Hash) error {
+	pdb, ok := db.backend.(*pathdb.Database)
+	if !ok {
+		return errors.New("not supported")
+	}
+	return pdb.Enable(root)
 }
 
 // Journal commits an entire diff hierarchy to disk into a single journal entry.
@@ -354,13 +320,7 @@ func (db *Database) SetBufferSize(size int) error {
 	return pdb.SetBufferSize(size)
 }
 
-// Head return the top non-fork difflayer/disklayer root hash for rewinding.
-// It's only supported by path-based database and will return an error for
-// others.
-func (db *Database) Head() common.Hash {
-	pdb, ok := db.backend.(*pathdb.Database)
-	if !ok {
-		return common.Hash{}
-	}
-	return pdb.Head()
+// IsVerkle returns the indicator if the database is holding a verkle tree.
+func (db *Database) IsVerkle() bool {
+	return db.config.IsVerkle
 }

@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/log"
 )
 
 const tmpSuffix = ".tmp"
@@ -47,12 +48,12 @@ type ResettableFreezer struct {
 //
 // The reset function will delete directory atomically and re-create the
 // freezer from scratch.
-func NewResettableFreezer(datadir string, namespace string, readonly bool, offset uint64, maxTableSize uint32, tables map[string]bool) (*ResettableFreezer, error) {
+func NewResettableFreezer(datadir string, namespace string, readonly bool, maxTableSize uint32, tables map[string]bool) (*ResettableFreezer, error) {
 	if err := cleanup(datadir); err != nil {
 		return nil, err
 	}
 	opener := func() (*Freezer, error) {
-		return NewFreezer(datadir, namespace, readonly, offset, maxTableSize, tables)
+		return NewFreezer(datadir, namespace, readonly, maxTableSize, tables)
 	}
 	freezer, err := opener()
 	if err != nil {
@@ -118,9 +119,10 @@ func (f *ResettableFreezer) Ancient(kind string, number uint64) ([]byte, error) 
 
 // AncientRange retrieves multiple items in sequence, starting from the index 'start'.
 // It will return
-//   - at most 'max' items,
-//   - at least 1 item (even if exceeding the maxByteSize), but will otherwise
-//     return as many items as fit into maxByteSize
+//   - at most 'count' items,
+//   - if maxBytes is specified: at least 1 item (even if exceeding the maxByteSize),
+//     but will otherwise return as many items as fit into maxByteSize.
+//   - if maxBytes is not specified, 'count' items will be returned if they are present.
 func (f *ResettableFreezer) AncientRange(kind string, start, count, maxBytes uint64) ([][]byte, error) {
 	f.lock.RLock()
 	defer f.lock.RUnlock()
@@ -159,22 +161,6 @@ func (f *ResettableFreezer) ReadAncients(fn func(ethdb.AncientReaderOp) error) (
 	defer f.lock.RUnlock()
 
 	return f.freezer.ReadAncients(fn)
-}
-
-// ItemAmountInAncient returns the actual length of current ancientDB.
-func (f *ResettableFreezer) ItemAmountInAncient() (uint64, error) {
-	f.lock.RLock()
-	defer f.lock.RUnlock()
-
-	return f.freezer.ItemAmountInAncient()
-}
-
-// AncientOffSet returns the offset of current ancientDB.
-func (f *ResettableFreezer) AncientOffSet() uint64 {
-	f.lock.RLock()
-	defer f.lock.RUnlock()
-
-	return f.freezer.AncientOffSet()
 }
 
 // ModifyAncients runs the given write operation.
@@ -240,6 +226,7 @@ func cleanup(path string) error {
 	}
 	for _, name := range names {
 		if name == filepath.Base(path)+tmpSuffix {
+			log.Info("Removed leftover freezer directory", "name", name)
 			return os.RemoveAll(filepath.Join(parent, name))
 		}
 	}

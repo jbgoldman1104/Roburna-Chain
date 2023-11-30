@@ -63,7 +63,6 @@ type fetchRequest struct {
 // all outstanding pieces complete and the result as a whole can be processed.
 type fetchResult struct {
 	pending atomic.Int32 // Flag telling what deliveries are outstanding
-	pid     string
 
 	Header       *types.Header
 	Uncles       []*types.Header
@@ -72,10 +71,9 @@ type fetchResult struct {
 	Withdrawals  types.Withdrawals
 }
 
-func newFetchResult(header *types.Header, fastSync bool, pid string) *fetchResult {
+func newFetchResult(header *types.Header, fastSync bool) *fetchResult {
 	item := &fetchResult{
 		Header: header,
-		pid:    pid,
 	}
 	if !header.EmptyBody() {
 		item.pending.Store(item.pending.Load() | (1 << bodyType))
@@ -514,7 +512,7 @@ func (q *queue) reserveHeaders(p *peerConnection, count int, taskPool map[common
 		// we can ask the resultcache if this header is within the
 		// "prioritized" segment of blocks. If it is not, we need to throttle
 
-		stale, throttle, item, err := q.resultCache.AddFetch(header, q.mode == SnapSync, p.id)
+		stale, throttle, item, err := q.resultCache.AddFetch(header, q.mode == SnapSync)
 		if stale {
 			// Don't put back in the task queue, this item has already been
 			// delivered upstream
@@ -800,7 +798,7 @@ func (q *queue) DeliverBodies(id string, txLists [][]*types.Transaction, txListH
 			}
 		}
 		// Blocks must have a number of blobs corresponding to the header gas usage,
-		// and zero before the Cancun hardfork
+		// and zero before the Cancun hardfork.
 		var blobs int
 		for _, tx := range txLists[index] {
 			// Count the number of blobs to validate against the header's blobGasUsed
@@ -815,6 +813,9 @@ func (q *queue) DeliverBodies(id string, txLists [][]*types.Transaction, txListH
 					if hash[0] != params.BlobTxHashVersion {
 						return errInvalidBody
 					}
+				}
+				if tx.BlobTxSidecar() != nil {
+					return errInvalidBody
 				}
 			}
 		}

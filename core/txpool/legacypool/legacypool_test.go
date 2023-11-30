@@ -1492,6 +1492,50 @@ func TestRepricing(t *testing.T) {
 	}
 }
 
+func TestMinGasPriceEnforced(t *testing.T) {
+	t.Parallel()
+
+	// Create the pool to test the pricing enforcement with
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
+	blockchain := newTestBlockChain(eip1559Config, 10000000, statedb, new(event.Feed))
+
+	txPoolConfig := DefaultConfig
+	txPoolConfig.NoLocals = true
+	pool := New(txPoolConfig, blockchain)
+	pool.Init(new(big.Int).SetUint64(txPoolConfig.PriceLimit), blockchain.CurrentBlock(), makeAddressReserver())
+	defer pool.Close()
+
+	key, _ := crypto.GenerateKey()
+	testAddBalance(pool, crypto.PubkeyToAddress(key.PublicKey), big.NewInt(1000000))
+
+	tx := pricedTransaction(0, 100000, big.NewInt(2), key)
+	pool.SetGasTip(big.NewInt(tx.GasPrice().Int64() + 1))
+
+	if err := pool.addLocal(tx); !errors.Is(err, txpool.ErrUnderpriced) {
+		t.Fatalf("Min tip not enforced")
+	}
+
+	if err := pool.Add([]*types.Transaction{tx}, true, false)[0]; !errors.Is(err, txpool.ErrUnderpriced) {
+		t.Fatalf("Min tip not enforced")
+	}
+
+	tx = dynamicFeeTx(0, 100000, big.NewInt(3), big.NewInt(2), key)
+	pool.SetGasTip(big.NewInt(tx.GasTipCap().Int64() + 1))
+
+	if err := pool.addLocal(tx); !errors.Is(err, txpool.ErrUnderpriced) {
+		t.Fatalf("Min tip not enforced")
+	}
+
+	if err := pool.Add([]*types.Transaction{tx}, true, false)[0]; !errors.Is(err, txpool.ErrUnderpriced) {
+		t.Fatalf("Min tip not enforced")
+	}
+	// Make sure the tx is accepted if locals are enabled
+	pool.config.NoLocals = false
+	if err := pool.Add([]*types.Transaction{tx}, true, false)[0]; err != nil {
+		t.Fatalf("Min tip enforced with locals enabled, error: %v", err)
+	}
+}
+
 // Tests that setting the transaction pool gas price to a higher value correctly
 // discards everything cheaper (legacy & dynamic fee) than that and moves any
 // gapped transactions back from the pending pool to the queue.
@@ -2485,48 +2529,6 @@ func TestSlotCount(t *testing.T) {
 	bigTx := pricedDataTransaction(0, 0, big.NewInt(0), key, uint64(10*txSlotSize))
 	if slots := numSlots(bigTx); slots != 11 {
 		t.Fatalf("big transactions slot count mismatch: have %d want %d", slots, 11)
-	}
-}
-
-// Tests the local pending transaction announced again correctly.
-func TestTransactionPendingReannouce(t *testing.T) {
-	t.Parallel()
-
-	// Create the pool to test the limit enforcement with
-	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
-
-	config := testTxPoolConfig
-	// This ReannounceTime will be modified to time.Minute when creating tx_pool.
-	config.ReannounceTime = time.Second
-	reannounceInterval = time.Second
-
-	pool := New(config, blockchain)
-	pool.Init(new(big.Int).SetUint64(config.PriceLimit), blockchain.CurrentBlock(), makeAddressReserver())
-	// Modify ReannounceTime to trigger quicker.
-	pool.config.ReannounceTime = time.Second
-	defer pool.Close()
-
-	key, _ := crypto.GenerateKey()
-	account := crypto.PubkeyToAddress(key.PublicKey)
-	pool.currentState.AddBalance(account, big.NewInt(1000000))
-
-	events := make(chan core.ReannoTxsEvent, testTxPoolConfig.AccountQueue)
-	sub := pool.reannoTxFeed.Subscribe(events)
-	defer sub.Unsubscribe()
-
-	// Generate a batch of transactions and add to tx_pool locally.
-	txs := make([]*types.Transaction, 0, testTxPoolConfig.AccountQueue)
-	for i := uint64(0); i < testTxPoolConfig.AccountQueue; i++ {
-		txs = append(txs, transaction(i, 100000, key))
-	}
-	pool.addLocals(txs)
-
-	select {
-	case ev := <-events:
-		t.Logf("received reannouce event, txs length: %d", len(ev.Txs))
-	case <-time.After(5 * time.Second):
-		t.Errorf("reannouce event not fired")
 	}
 }
 

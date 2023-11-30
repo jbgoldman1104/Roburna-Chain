@@ -68,6 +68,7 @@ func (basic *snapshotTestBasic) prepare(t *testing.T) (*BlockChain, []*types.Blo
 	db, err := rawdb.Open(rawdb.OpenOptions{
 		Directory:         datadir,
 		AncientsDirectory: ancient,
+		Ephemeral:         true,
 	})
 	if err != nil {
 		t.Fatalf("Failed to create persistent database: %v", err)
@@ -258,6 +259,7 @@ func (snaptest *crashSnapshotTest) test(t *testing.T) {
 	newdb, err := rawdb.Open(rawdb.OpenOptions{
 		Directory:         snaptest.datadir,
 		AncientsDirectory: snaptest.ancient,
+		Ephemeral:         true,
 	})
 	if err != nil {
 		t.Fatalf("Failed to reopen persistent database: %v", err)
@@ -308,7 +310,6 @@ func (snaptest *gappedSnapshotTest) test(t *testing.T) {
 		TrieCleanLimit: 256,
 		TrieDirtyLimit: 256,
 		TrieTimeLimit:  5 * time.Minute,
-		TriesInMemory:  128,
 		SnapshotLimit:  0,
 		StateScheme:    snaptest.scheme,
 	}
@@ -382,7 +383,6 @@ func (snaptest *wipeCrashSnapshotTest) test(t *testing.T) {
 		TrieDirtyLimit: 256,
 		TrieTimeLimit:  5 * time.Minute,
 		SnapshotLimit:  0,
-		TriesInMemory:  128,
 		StateScheme:    snaptest.scheme,
 	}
 	newchain, err := NewBlockChain(snaptest.db, config, snaptest.gspec, nil, snaptest.engine, vm.Config{}, nil, nil)
@@ -400,7 +400,6 @@ func (snaptest *wipeCrashSnapshotTest) test(t *testing.T) {
 		TrieTimeLimit:  5 * time.Minute,
 		SnapshotLimit:  256,
 		SnapshotWait:   false, // Don't wait rebuild
-		TriesInMemory:  128,
 		StateScheme:    snaptest.scheme,
 	}
 	tmp, err := NewBlockChain(snaptest.db, config, snaptest.gspec, nil, snaptest.engine, vm.Config{}, nil, nil)
@@ -483,8 +482,7 @@ func TestNoCommitCrashWithNewSnapshot(t *testing.T) {
 	// Expected head fast block: C8
 	// Expected head block     : G
 	// Expected snapshot disk  : C4
-	//for _, scheme := range []string{rawdb.HashScheme, rawdb.PathScheme} {
-	for _, scheme := range []string{rawdb.HashScheme} {
+	for _, scheme := range []string{rawdb.HashScheme, rawdb.PathScheme} {
 		test := &crashSnapshotTest{
 			snapshotTestBasic{
 				scheme:             scheme,
@@ -526,8 +524,7 @@ func TestLowCommitCrashWithNewSnapshot(t *testing.T) {
 	// Expected head fast block: C8
 	// Expected head block     : C2
 	// Expected snapshot disk  : C4
-	//for _, scheme := range []string{rawdb.HashScheme, rawdb.PathScheme} {
-	for _, scheme := range []string{rawdb.HashScheme} {
+	for _, scheme := range []string{rawdb.HashScheme, rawdb.PathScheme} {
 		test := &crashSnapshotTest{
 			snapshotTestBasic{
 				scheme:             scheme,

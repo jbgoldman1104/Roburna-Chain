@@ -1767,6 +1767,7 @@ func testRepairWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme s
 	db, err := rawdb.Open(rawdb.OpenOptions{
 		Directory:         datadir,
 		AncientsDirectory: ancient,
+		Ephemeral:         true,
 	})
 	if err != nil {
 		t.Fatalf("Failed to create persistent database: %v", err)
@@ -1793,7 +1794,6 @@ func testRepairWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme s
 		config.SnapshotLimit = 256
 		config.SnapshotWait = true
 	}
-	config.TriesInMemory = 128
 	chain, err := NewBlockChain(db, config, gspec, nil, engine, vm.Config{}, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
@@ -1825,7 +1825,6 @@ func testRepairWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme s
 			}
 		}
 	}
-
 	if _, err := chain.InsertChain(canonblocks[tt.commitBlock:]); err != nil {
 		t.Fatalf("Failed to import canonical chain tail: %v", err)
 	}
@@ -1849,6 +1848,7 @@ func testRepairWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme s
 	db, err = rawdb.Open(rawdb.OpenOptions{
 		Directory:         datadir,
 		AncientsDirectory: ancient,
+		Ephemeral:         true,
 	})
 	if err != nil {
 		t.Fatalf("Failed to reopen persistent database: %v", err)
@@ -1970,6 +1970,7 @@ func testIssue23496(t *testing.T, scheme string) {
 	db, err = rawdb.Open(rawdb.OpenOptions{
 		Directory:         datadir,
 		AncientsDirectory: ancient,
+		Ephemeral:         true,
 	})
 	if err != nil {
 		t.Fatalf("Failed to reopen persistent database: %v", err)

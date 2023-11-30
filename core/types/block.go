@@ -31,32 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
-type VerifyStatus struct {
-	Code uint16
-	Msg  string
-}
-
-var (
-	// StatusVerified means the processing of request going as expected and found the root correctly.
-	StatusVerified          = VerifyStatus{Code: 0x100}
-	StatusFullVerified      = VerifyStatus{Code: 0x101, Msg: "state root full verified"}
-	StatusPartiallyVerified = VerifyStatus{Code: 0x102, Msg: "state root partially verified, because of difflayer not found"}
-
-	// StatusFailed means the request has something wrong.
-	StatusFailed           = VerifyStatus{Code: 0x200}
-	StatusDiffHashMismatch = VerifyStatus{Code: 0x201, Msg: "verify failed because of blockhash mismatch with diffhash"}
-	StatusImpossibleFork   = VerifyStatus{Code: 0x202, Msg: "verify failed because of impossible fork detected"}
-
-	// StatusUncertain means verify node can't give a certain result of the request.
-	StatusUncertain    = VerifyStatus{Code: 0x300}
-	StatusBlockTooNew  = VerifyStatus{Code: 0x301, Msg: "can’t verify because of block number larger than current height more than 11"}
-	StatusBlockNewer   = VerifyStatus{Code: 0x302, Msg: "can’t verify because of block number larger than current height"}
-	StatusPossibleFork = VerifyStatus{Code: 0x303, Msg: "can’t verify because of possible fork detected"}
-
-	// StatusUnexpectedError is unexpected internal error.
-	StatusUnexpectedError = VerifyStatus{Code: 0x400, Msg: "can’t verify because of unexpected internal error"}
-)
-
 // A BlockNonce is a 64-bit hash which proves (combined with the
 // mix-hash) that a sufficient amount of computation has been carried
 // out on a block.
@@ -116,6 +90,9 @@ type Header struct {
 
 	// ExcessBlobGas was added by EIP-4844 and is ignored in legacy headers.
 	ExcessBlobGas *uint64 `json:"excessBlobGas" rlp:"optional"`
+
+	// ParentBeaconRoot was added by EIP-4788 and is ignored in legacy headers.
+	ParentBeaconRoot *common.Hash `json:"parentBeaconBlockRoot" rlp:"optional"`
 }
 
 // field type overrides for gencodec
@@ -323,6 +300,10 @@ func CopyHeader(h *Header) *Header {
 		cpy.BlobGasUsed = new(uint64)
 		*cpy.BlobGasUsed = *h.BlobGasUsed
 	}
+	if h.ParentBeaconRoot != nil {
+		cpy.ParentBeaconRoot = new(common.Hash)
+		*cpy.ParentBeaconRoot = *h.ParentBeaconRoot
+	}
 	return &cpy
 }
 
@@ -402,6 +383,8 @@ func (b *Block) BaseFee() *big.Int {
 	return new(big.Int).Set(b.header.BaseFee)
 }
 
+func (b *Block) BeaconRoot() *common.Hash { return b.header.ParentBeaconRoot }
+
 func (b *Block) ExcessBlobGas() *uint64 {
 	var excessBlobGas *uint64
 	if b.header.ExcessBlobGas != nil {
@@ -431,8 +414,6 @@ func (b *Block) Size() uint64 {
 	b.size.Store(uint64(c))
 	return uint64(c)
 }
-
-func (b *Block) SetRoot(root common.Hash) { b.header.Root = root }
 
 // SanityCheck can be used to prevent that unbounded fields are
 // stuffed with junk data to add processing overhead
@@ -530,95 +511,4 @@ func HeaderParentHashFromRLP(header []byte) common.Hash {
 		return common.Hash{}
 	}
 	return common.BytesToHash(parentHash)
-}
-
-type DiffLayer struct {
-	BlockHash common.Hash
-	Number    uint64
-	Receipts  Receipts // Receipts are duplicated stored to simplify the logic
-	Codes     []DiffCode
-	Destructs []common.Address
-	Accounts  []DiffAccount
-	Storages  []DiffStorage
-
-	DiffHash atomic.Value
-}
-
-type ExtDiffLayer struct {
-	BlockHash common.Hash
-	Number    uint64
-	Receipts  []*ReceiptForStorage // Receipts are duplicated stored to simplify the logic
-	Codes     []DiffCode
-	Destructs []common.Address
-	Accounts  []DiffAccount
-	Storages  []DiffStorage
-}
-
-// DecodeRLP decodes the Ethereum
-func (d *DiffLayer) DecodeRLP(s *rlp.Stream) error {
-	var ed ExtDiffLayer
-	if err := s.Decode(&ed); err != nil {
-		return err
-	}
-	d.BlockHash, d.Number, d.Codes, d.Destructs, d.Accounts, d.Storages =
-		ed.BlockHash, ed.Number, ed.Codes, ed.Destructs, ed.Accounts, ed.Storages
-
-	d.Receipts = make([]*Receipt, len(ed.Receipts))
-	for i, storageReceipt := range ed.Receipts {
-		d.Receipts[i] = (*Receipt)(storageReceipt)
-	}
-	return nil
-}
-
-// EncodeRLP serializes b into the Ethereum RLP block format.
-func (d *DiffLayer) EncodeRLP(w io.Writer) error {
-	storageReceipts := make([]*ReceiptForStorage, len(d.Receipts))
-	for i, receipt := range d.Receipts {
-		storageReceipts[i] = (*ReceiptForStorage)(receipt)
-	}
-	return rlp.Encode(w, ExtDiffLayer{
-		BlockHash: d.BlockHash,
-		Number:    d.Number,
-		Receipts:  storageReceipts,
-		Codes:     d.Codes,
-		Destructs: d.Destructs,
-		Accounts:  d.Accounts,
-		Storages:  d.Storages,
-	})
-}
-
-type DiffCode struct {
-	Hash common.Hash
-	Code []byte
-}
-
-type DiffAccount struct {
-	Account common.Hash
-	Blob    []byte
-}
-
-type DiffStorage struct {
-	Account common.Hash
-	Keys    []common.Hash // Keys are hashed ones
-	Vals    [][]byte
-}
-
-func (storage *DiffStorage) Len() int { return len(storage.Keys) }
-func (storage *DiffStorage) Swap(i, j int) {
-	storage.Keys[i], storage.Keys[j] = storage.Keys[j], storage.Keys[i]
-	storage.Vals[i], storage.Vals[j] = storage.Vals[j], storage.Vals[i]
-}
-func (storage *DiffStorage) Less(i, j int) bool {
-	return string(storage.Keys[i][:]) < string(storage.Keys[j][:])
-}
-
-type DiffAccountsInTx struct {
-	TxHash   common.Hash
-	Accounts map[common.Address]*big.Int
-}
-
-type DiffAccountsInBlock struct {
-	Number       uint64
-	BlockHash    common.Hash
-	Transactions []DiffAccountsInTx
 }

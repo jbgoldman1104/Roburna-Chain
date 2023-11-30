@@ -435,7 +435,7 @@ func checkReceiptsRLP(have, want types.Receipts) error {
 func TestAncientStorage(t *testing.T) {
 	// Freezer style fast import the chain.
 	frdir := t.TempDir()
-	db, err := NewDatabaseWithFreezer(NewMemoryDatabase(), frdir, "", false, false, false, false)
+	db, err := NewDatabaseWithFreezer(NewMemoryDatabase(), frdir, "", false)
 	if err != nil {
 		t.Fatalf("failed to create database with ancient backend")
 	}
@@ -573,7 +573,7 @@ func TestHashesInRange(t *testing.T) {
 func BenchmarkWriteAncientBlocks(b *testing.B) {
 	// Open freezer database.
 	frdir := b.TempDir()
-	db, err := NewDatabaseWithFreezer(NewMemoryDatabase(), frdir, "", false, false, false, false)
+	db, err := NewDatabaseWithFreezer(NewMemoryDatabase(), frdir, "", false)
 	if err != nil {
 		b.Fatalf("failed to create database with ancient backend")
 	}
@@ -736,7 +736,7 @@ func TestReadLogs(t *testing.T) {
 	// Insert the receipt slice into the database and check presence
 	WriteReceipts(db, hash, 0, receipts)
 
-	logs := ReadLogs(db, hash, 0, params.TestChainConfig)
+	logs := ReadLogs(db, hash, 0)
 	if len(logs) == 0 {
 		t.Fatalf("no logs returned")
 	}
@@ -876,7 +876,7 @@ func TestHeadersRLPStorage(t *testing.T) {
 	// Have N headers in the freezer
 	frdir := t.TempDir()
 
-	db, err := NewDatabaseWithFreezer(NewMemoryDatabase(), frdir, "", false, false, false, false)
+	db, err := NewDatabaseWithFreezer(NewMemoryDatabase(), frdir, "", false)
 	if err != nil {
 		t.Fatalf("failed to create database with ancient backend")
 	}

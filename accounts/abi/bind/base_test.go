@@ -31,7 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/stretchr/testify/assert"
 )
@@ -76,10 +75,6 @@ func (mt *mockTransactor) SendTransaction(ctx context.Context, tx *types.Transac
 	return nil
 }
 
-func (mt *mockTransactor) SendTransactionConditional(ctx context.Context, tx *types.Transaction, opts ethapi.TransactionOpts) error {
-	return nil
-}
-
 type mockCaller struct {
 	codeAtBlockNumber       *big.Int
 	callContractBlockNumber *big.Int
@@ -117,6 +112,26 @@ func (mc *mockPendingCaller) PendingCodeAt(ctx context.Context, contract common.
 func (mc *mockPendingCaller) PendingCallContract(ctx context.Context, call ethereum.CallMsg) ([]byte, error) {
 	mc.pendingCallContractCalled = true
 	return mc.pendingCallContractBytes, mc.pendingCallContractErr
+}
+
+type mockBlockHashCaller struct {
+	*mockCaller
+	codeAtHashBytes          []byte
+	codeAtHashErr            error
+	codeAtHashCalled         bool
+	callContractAtHashCalled bool
+	callContractAtHashBytes  []byte
+	callContractAtHashErr    error
+}
+
+func (mc *mockBlockHashCaller) CodeAtHash(ctx context.Context, contract common.Address, hash common.Hash) ([]byte, error) {
+	mc.codeAtHashCalled = true
+	return mc.codeAtHashBytes, mc.codeAtHashErr
+}
+
+func (mc *mockBlockHashCaller) CallContractAtHash(ctx context.Context, call ethereum.CallMsg, hash common.Hash) ([]byte, error) {
+	mc.callContractAtHashCalled = true
+	return mc.callContractAtHashBytes, mc.callContractAtHashErr
 }
 
 func TestPassingBlockNumber(t *testing.T) {
@@ -406,6 +421,15 @@ func TestCall(t *testing.T) {
 		},
 		method: method,
 	}, {
+		name: "ok hash",
+		mc: &mockBlockHashCaller{
+			codeAtHashBytes: []byte{0},
+		},
+		opts: &bind.CallOpts{
+			BlockHash: common.Hash{0xaa},
+		},
+		method: method,
+	}, {
 		name:    "pack error, no method",
 		mc:      new(mockCaller),
 		method:  "else",
@@ -418,6 +442,14 @@ func TestCall(t *testing.T) {
 		},
 		method:       method,
 		wantErrExact: bind.ErrNoPendingState,
+	}, {
+		name: "interface error, blockHash but not a BlockHashContractCaller",
+		mc:   new(mockCaller),
+		opts: &bind.CallOpts{
+			BlockHash: common.Hash{0xaa},
+		},
+		method:       method,
+		wantErrExact: bind.ErrNoBlockHashState,
 	}, {
 		name: "pending call canceled",
 		mc: &mockPendingCaller{
@@ -463,6 +495,34 @@ func TestCall(t *testing.T) {
 	}, {
 		name:         "no code at",
 		mc:           new(mockCaller),
+		method:       method,
+		wantErrExact: bind.ErrNoCode,
+	}, {
+		name: "call contract at hash error",
+		mc: &mockBlockHashCaller{
+			callContractAtHashErr: context.DeadlineExceeded,
+		},
+		opts: &bind.CallOpts{
+			BlockHash: common.Hash{0xaa},
+		},
+		method:       method,
+		wantErrExact: context.DeadlineExceeded,
+	}, {
+		name: "code at error",
+		mc: &mockBlockHashCaller{
+			codeAtHashErr: errors.New(""),
+		},
+		opts: &bind.CallOpts{
+			BlockHash: common.Hash{0xaa},
+		},
+		method:  method,
+		wantErr: true,
+	}, {
+		name: "no code at hash",
+		mc:   new(mockBlockHashCaller),
+		opts: &bind.CallOpts{
+			BlockHash: common.Hash{0xaa},
+		},
 		method:       method,
 		wantErrExact: bind.ErrNoCode,
 	}, {

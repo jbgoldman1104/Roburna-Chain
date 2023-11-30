@@ -116,9 +116,8 @@ type Peer struct {
 	disc     chan DiscReason
 
 	// events receives message send / receive events if set
-	events         *event.Feed
-	testPipe       *MsgPipeRW // for testing
-	testRemoteAddr string     // for testing
+	events   *event.Feed
+	testPipe *MsgPipeRW // for testing
 }
 
 // NewPeer returns a peer for testing purposes.
@@ -146,16 +145,6 @@ func NewPeerPipe(id enode.ID, name string, caps []Cap, pipe *MsgPipeRW) *Peer {
 	p := NewPeer(id, name, caps)
 	p.testPipe = pipe
 	return p
-}
-
-// NewPeerWithProtocols returns a peer for testing purposes.
-func NewPeerWithProtocols(id enode.ID, protocols []Protocol, name string, caps []Cap) *Peer {
-	pipe, _ := net.Pipe()
-	node := enode.SignNull(new(enr.Record), id)
-	conn := &conn{fd: pipe, transport: nil, node: node, caps: caps, name: name}
-	peer := newPeer(log.Root(), conn, protocols)
-	close(peer.closed) // ensures Disconnect doesn't block
-	return peer
 }
 
 // ID returns the node's public key.
@@ -204,21 +193,7 @@ func (p *Peer) RunningCap(protocol string, versions []uint) bool {
 
 // RemoteAddr returns the remote address of the network connection.
 func (p *Peer) RemoteAddr() net.Addr {
-	if len(p.testRemoteAddr) > 0 {
-		if addr, err := net.ResolveTCPAddr("tcp", p.testRemoteAddr); err == nil {
-			return addr
-		}
-		log.Warn("RemoteAddr", "invalid testRemoteAddr", p.testRemoteAddr)
-	}
 	return p.rw.fd.RemoteAddr()
-}
-
-func (p *Peer) UpdateTestRemoteAddr(addr string) { // test purpose only
-	p.testRemoteAddr = addr
-}
-
-func (p *Peer) UpdateTrustFlagTest() { // test purpose only
-	p.rw.set(trustedConn, true)
 }
 
 // LocalAddr returns the local address of the network connection.
@@ -248,11 +223,6 @@ func (p *Peer) String() string {
 // Inbound returns true if the peer is an inbound connection
 func (p *Peer) Inbound() bool {
 	return p.rw.is(inboundConn)
-}
-
-// VerifyNode returns true if the peer is a verification connection
-func (p *Peer) VerifyNode() bool {
-	return p.rw.is(verifyConn)
 }
 
 func newPeer(log log.Logger, conn *conn, protocols []Protocol) *Peer {

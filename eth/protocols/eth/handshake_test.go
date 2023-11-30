@@ -27,7 +27,8 @@ import (
 )
 
 // Tests that handshake failures are detected and reported correctly.
-func TestHandshake66(t *testing.T) { testHandshake(t, ETH66) }
+func TestHandshake67(t *testing.T) { testHandshake(t, ETH67) }
+func TestHandshake68(t *testing.T) { testHandshake(t, ETH68) }
 
 func testHandshake(t *testing.T, protocol uint) {
 	t.Parallel()
@@ -40,7 +41,7 @@ func testHandshake(t *testing.T, protocol uint) {
 		genesis = backend.chain.Genesis()
 		head    = backend.chain.CurrentBlock()
 		td      = backend.chain.GetTd(head.Hash(), head.Number.Uint64())
-		forkID  = forkid.NewID(backend.chain.Config(), backend.chain.Genesis().Hash(), backend.chain.CurrentHeader().Number.Uint64(), backend.chain.CurrentHeader().Time)
+		forkID  = forkid.NewID(backend.chain.Config(), backend.chain.Genesis(), backend.chain.CurrentHeader().Number.Uint64(), backend.chain.CurrentHeader().Time)
 	)
 	tests := []struct {
 		code uint64
@@ -80,7 +81,7 @@ func testHandshake(t *testing.T, protocol uint) {
 		// Send the junk test with one peer, check the handshake failure
 		go p2p.Send(app, test.code, test.data)
 
-		err := peer.Handshake(1, td, head.Hash(), genesis.Hash(), forkID, forkid.NewFilter(backend.chain), nil)
+		err := peer.Handshake(1, td, head.Hash(), genesis.Hash(), forkID, forkid.NewFilter(backend.chain))
 		if err == nil {
 			t.Errorf("test %d: protocol returned nil error, want %q", i, test.want)
 		} else if !errors.Is(err, test.want) {

@@ -20,11 +20,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/big"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -78,9 +76,6 @@ func (eth *Ethereum) hashState(ctx context.Context, block *types.Block, reexec u
 		// The optional base statedb is given, mark the start point as parent block
 		statedb, database, triedb, report = base, base.Database(), base.Database().TrieDB(), false
 		current = eth.blockchain.GetBlock(block.ParentHash(), block.NumberU64()-1)
-		if current == nil {
-			return nil, nil, fmt.Errorf("missing parent block %v %d", block.ParentHash(), block.NumberU64()-1)
-		}
 	} else {
 		// Otherwise, try to reexec blocks until we find a state or reach our limit
 		current = block
@@ -150,19 +145,17 @@ func (eth *Ethereum) hashState(ctx context.Context, block *types.Block, reexec u
 		if current = eth.blockchain.GetBlockByNumber(next); current == nil {
 			return nil, nil, fmt.Errorf("block #%d not found", next)
 		}
-		statedb, _, _, _, err := eth.blockchain.Processor().Process(current, statedb, vm.Config{})
+		_, _, _, err := eth.blockchain.Processor().Process(current, statedb, vm.Config{})
 		if err != nil {
 			return nil, nil, fmt.Errorf("processing block %d failed: %v", current.NumberU64(), err)
 		}
 		// Finalize the state so any modifications are written to the trie
-		statedb.Finalise(eth.blockchain.Config().IsEIP158(current.Number()))
-		statedb.AccountsIntermediateRoot()
-		root, _, err := statedb.Commit(current.NumberU64(), nil)
+		root, err := statedb.Commit(current.NumberU64(), eth.blockchain.Config().IsEIP158(current.Number()))
 		if err != nil {
 			return nil, nil, fmt.Errorf("stateAtBlock commit failed, number %d root %v: %w",
 				current.NumberU64(), current.Root().Hex(), err)
 		}
-		statedb, err = state.New(root, database, nil) // nolint:staticcheck
+		statedb, err = state.New(root, database, nil)
 		if err != nil {
 			return nil, nil, fmt.Errorf("state reset after block %d failed: %v", current.NumberU64(), err)
 		}
@@ -175,8 +168,8 @@ func (eth *Ethereum) hashState(ctx context.Context, block *types.Block, reexec u
 		parent = root
 	}
 	if report {
-		diff, nodes, immutablenodes, imgs := triedb.Size()
-		log.Info("Historical state regenerated", "block", current.NumberU64(), "elapsed", time.Since(start), "layer", diff, "nodes", nodes, "immutablenodes", immutablenodes, "preimages", imgs)
+		_, nodes, imgs := triedb.Size() // all memory is contained within the nodes return in hashdb
+		log.Info("Historical state regenerated", "block", current.NumberU64(), "elapsed", time.Since(start), "nodes", nodes, "preimages", imgs)
 	}
 	return statedb, func() { triedb.Dereference(block.Root()) }, nil
 }
@@ -254,14 +247,6 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 		}
 		// Not yet the searched for transaction, execute on top of the current state
 		vmenv := vm.NewEVM(context, txContext, statedb, eth.blockchain.Config(), vm.Config{})
-		if posa, ok := eth.Engine().(consensus.PoSA); ok && msg.From == context.Coinbase &&
-			posa.IsSystemContract(msg.To) && msg.GasPrice.Cmp(big.NewInt(0)) == 0 {
-			balance := statedb.GetBalance(consensus.SystemAddress)
-			if balance.Cmp(common.Big0) > 0 {
-				statedb.SetBalance(consensus.SystemAddress, big.NewInt(0))
-				statedb.AddBalance(context.Coinbase, balance)
-			}
-		}
 		statedb.SetTxContext(tx.Hash(), idx)
 		if _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(tx.Gas())); err != nil {
 			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)

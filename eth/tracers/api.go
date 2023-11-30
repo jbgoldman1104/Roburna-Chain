@@ -18,19 +18,16 @@ package tracers
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"os"
 	"runtime"
 	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/gopool"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
@@ -261,7 +258,7 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 	)
 	for th := 0; th < threads; th++ {
 		pend.Add(1)
-		gopool.Submit(func() {
+		go func() {
 			defer pend.Done()
 
 			// Fetch and execute the block trace taskCh
@@ -301,11 +298,10 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 					return
 				}
 			}
-		})
+		}()
 	}
-
 	// Start a goroutine to feed all the blocks into the tracers
-	gopool.Submit(func() {
+	go func() {
 		var (
 			logged  time.Time
 			begin   = time.Now()
@@ -372,8 +368,8 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 			// if the relevant state is available in disk.
 			var preferDisk bool
 			if statedb != nil {
-				s1, s2, s3, s4 := statedb.Database().TrieDB().Size()
-				preferDisk = s1+s2+s3+s4 > defaultTracechainMemLimit
+				s1, s2, s3 := statedb.Database().TrieDB().Size()
+				preferDisk = s1+s2+s3 > defaultTracechainMemLimit
 			}
 			statedb, release, err = api.backend.StateAtBlock(ctx, block, reexec, statedb, false, preferDisk)
 			if err != nil {
@@ -396,11 +392,11 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 			}
 			traced += uint64(len(txs))
 		}
-	})
+	}()
 
 	// Keep reading the trace results and stream them to result channel.
 	retCh := make(chan *blockTraceResult)
-	gopool.Submit(func() {
+	go func() {
 		defer close(retCh)
 		var (
 			next = start.NumberU64() + 1
@@ -428,7 +424,7 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 				next++
 			}
 		}
-	})
+	}()
 	return retCh
 }
 
@@ -456,7 +452,7 @@ func (api *API) TraceBlockByHash(ctx context.Context, hash common.Hash, config *
 // and returns them as a JSON object.
 func (api *API) TraceBlock(ctx context.Context, blob hexutil.Bytes, config *TraceConfig) ([]*txTraceResult, error) {
 	block := new(types.Block)
-	if err := rlp.Decode(bytes.NewReader(blob), block); err != nil {
+	if err := rlp.DecodeBytes(blob, block); err != nil {
 		return nil, fmt.Errorf("could not decode block: %v", err)
 	}
 	return api.traceBlock(ctx, block, config)
@@ -538,17 +534,6 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 			txContext = core.NewEVMTxContext(msg)
 			vmenv     = vm.NewEVM(vmctx, txContext, statedb, chainConfig, vm.Config{})
 		)
-
-		if posa, ok := api.backend.Engine().(consensus.PoSA); ok {
-			if isSystem, _ := posa.IsSystemTransaction(tx, block.Header()); isSystem {
-				balance := statedb.GetBalance(consensus.SystemAddress)
-				if balance.Cmp(common.Big0) > 0 {
-					statedb.SetBalance(consensus.SystemAddress, big.NewInt(0))
-					statedb.AddBalance(vmctx.Coinbase, balance)
-				}
-			}
-		}
-
 		statedb.SetTxContext(tx.Hash(), i)
 		if _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.GasLimit)); err != nil {
 			log.Warn("Tracing intermediate roots did not complete", "txindex", i, "txhash", tx.Hash(), "err", err)
@@ -562,9 +547,7 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 		}
 		// calling IntermediateRoot will internally call Finalize on the state
 		// so any modifications are written to the trie
-		root := statedb.IntermediateRoot(deleteEmptyObjects)
-
-		roots = append(roots, root)
+		roots = append(roots, statedb.IntermediateRoot(deleteEmptyObjects))
 	}
 	return roots, nil
 }
@@ -660,8 +643,7 @@ func (api *API) traceBlockParallel(ctx context.Context, block *types.Block, stat
 	jobs := make(chan *txTraceTask, threads)
 	for th := 0; th < threads; th++ {
 		pend.Add(1)
-		gopool.Submit(func() {
-			blockCtx := core.NewEVMBlockContext(block.Header(), api.chainContext(ctx), nil)
+		go func() {
 			defer pend.Done()
 			// Fetch and execute the next transaction trace tasks
 			for task := range jobs {
@@ -679,7 +661,7 @@ func (api *API) traceBlockParallel(ctx context.Context, block *types.Block, stat
 				}
 				results[task.index] = &txTraceResult{TxHash: txs[task.index].Hash(), Result: res}
 			}
-		})
+		}()
 	}
 
 	// Feed the transactions into the tracers and return
@@ -697,15 +679,6 @@ txloop:
 
 		// Generate the next state snapshot fast without tracing
 		msg, _ := core.TransactionToMessage(tx, signer, block.BaseFee())
-		if posa, ok := api.backend.Engine().(consensus.PoSA); ok {
-			if isSystem, _ := posa.IsSystemTransaction(tx, block.Header()); isSystem {
-				balance := statedb.GetBalance(consensus.SystemAddress)
-				if balance.Cmp(common.Big0) > 0 {
-					statedb.SetBalance(consensus.SystemAddress, big.NewInt(0))
-					statedb.AddBalance(block.Header().Coinbase, balance)
-				}
-			}
-		}
 		statedb.SetTxContext(tx.Hash(), i)
 		vmenv := vm.NewEVM(blockCtx, core.NewEVMTxContext(msg), statedb, api.backend.ChainConfig(), vm.Config{})
 		if _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.GasLimit)); err != nil {
@@ -814,15 +787,6 @@ func (api *API) standardTraceBlockToFile(ctx context.Context, block *types.Block
 		}
 		// Execute the transaction and flush any traces to disk
 		vmenv := vm.NewEVM(vmctx, txContext, statedb, chainConfig, vmConf)
-		if posa, ok := api.backend.Engine().(consensus.PoSA); ok {
-			if isSystem, _ := posa.IsSystemTransaction(tx, block.Header()); isSystem {
-				balance := statedb.GetBalance(consensus.SystemAddress)
-				if balance.Cmp(common.Big0) > 0 {
-					statedb.SetBalance(consensus.SystemAddress, big.NewInt(0))
-					statedb.AddBalance(vmctx.Coinbase, balance)
-				}
-			}
-		}
 		statedb.SetTxContext(tx.Hash(), i)
 		_, err = core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.GasLimit))
 		if writer != nil {
@@ -995,24 +959,11 @@ func (api *API) traceTx(ctx context.Context, message *core.Message, txctx *Conte
 	}()
 	defer cancel()
 
-	var intrinsicGas uint64 = 0
-	// Run the transaction with tracing enabled.
-	if posa, ok := api.backend.Engine().(consensus.PoSA); ok && message.From == vmctx.Coinbase &&
-		posa.IsSystemContract(message.To) && message.GasPrice.Cmp(big.NewInt(0)) == 0 {
-		balance := statedb.GetBalance(consensus.SystemAddress)
-		if balance.Cmp(common.Big0) > 0 {
-			statedb.SetBalance(consensus.SystemAddress, big.NewInt(0))
-			statedb.AddBalance(vmctx.Coinbase, balance)
-		}
-		intrinsicGas, _ = core.IntrinsicGas(message.Data, message.AccessList, false, true, true, false)
-	}
-
 	// Call Prepare to clear out the statedb access list
 	statedb.SetTxContext(txctx.TxHash, txctx.TxIndex)
 	if _, err = core.ApplyMessage(vmenv, message, new(core.GasPool).AddGas(message.GasLimit)); err != nil {
 		return nil, fmt.Errorf("tracing failed: %w", err)
 	}
-	tracer.CaptureSystemTxEnd(intrinsicGas)
 	return tracer.GetResult()
 }
 

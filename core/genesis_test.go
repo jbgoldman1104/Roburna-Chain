@@ -17,6 +17,7 @@
 package core
 
 import (
+	"bytes"
 	"encoding/json"
 	"math/big"
 	"reflect"
@@ -32,6 +33,15 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
 )
+
+func TestInvalidCliqueConfig(t *testing.T) {
+	block := DefaultGoerliGenesisBlock()
+	block.ExtraData = []byte{}
+	db := rawdb.NewMemoryDatabase()
+	if _, err := block.Commit(db, trie.NewDatabase(db, nil)); err == nil {
+		t.Fatal("Expected error on invalid clique config")
+	}
+}
 
 func TestSetupGenesis(t *testing.T) {
 	testSetupGenesis(t, rawdb.HashScheme)
@@ -92,6 +102,17 @@ func testSetupGenesis(t *testing.T, scheme string) {
 			},
 			wantHash:   customghash,
 			wantConfig: customg.Config,
+		},
+		{
+			name: "custom block in DB, genesis == goerli",
+			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
+				tdb := trie.NewDatabase(db, newDbConfig(scheme))
+				customg.Commit(db, tdb)
+				return SetupGenesisBlock(db, tdb, DefaultGoerliGenesisBlock())
+			},
+			wantErr:    &GenesisMismatchError{Stored: customghash, New: params.GoerliGenesisHash},
+			wantHash:   params.GoerliGenesisHash,
+			wantConfig: params.GoerliChainConfig,
 		},
 		{
 			name: "compatible config in DB",
@@ -162,6 +183,8 @@ func TestGenesisHashes(t *testing.T) {
 		want    common.Hash
 	}{
 		{DefaultGenesisBlock(), params.MainnetGenesisHash},
+		{DefaultGoerliGenesisBlock(), params.GoerliGenesisHash},
+		{DefaultSepoliaGenesisBlock(), params.SepoliaGenesisHash},
 	} {
 		// Test via MustCommit
 		db := rawdb.NewMemoryDatabase()
@@ -209,7 +232,7 @@ func TestReadWriteGenesisAlloc(t *testing.T) {
 			{1}: {Balance: big.NewInt(1), Storage: map[common.Hash]common.Hash{{1}: {1}}},
 			{2}: {Balance: big.NewInt(2), Storage: map[common.Hash]common.Hash{{2}: {2}}},
 		}
-		hash, _ = alloc.deriveHash()
+		hash, _ = alloc.hash(false)
 	)
 	blob, _ := json.Marshal(alloc)
 	rawdb.WriteGenesisStateSpec(db, hash, blob)
@@ -233,62 +256,72 @@ func TestReadWriteGenesisAlloc(t *testing.T) {
 	}
 }
 
-func TestConfigOrDefault(t *testing.T) {
-	defaultGenesis := DefaultGenesisBlock()
-	if defaultGenesis.Config.PlanckBlock != nil {
-		t.Errorf("initial config should have PlanckBlock = nil, but instead PlanckBlock = %v", defaultGenesis.Config.PlanckBlock)
-	}
-	gHash := params.BSCGenesisHash
-	config := defaultGenesis.configOrDefault(gHash)
-
-	if config.ChainID.Cmp(params.MainnetChainConfig.ChainID) != 0 {
-		t.Errorf("ChainID of resulting config should be %v, but is %v instead", params.BSCChainConfig.ChainID, config.ChainID)
-	}
-
-	if config.HomesteadBlock.Cmp(params.MainnetChainConfig.HomesteadBlock) != 0 {
-		t.Errorf("resulting config should have HomesteadBlock = %v, but instead is %v", params.MainnetChainConfig, config.HomesteadBlock)
-	}
-
-	if config.PlanckBlock == nil {
-		t.Errorf("resulting config should have PlanckBlock = %v , but instead is nil", params.BSCChainConfig.PlanckBlock)
-	}
-
-	if config.PlanckBlock.Cmp(params.BSCChainConfig.PlanckBlock) != 0 {
-		t.Errorf("resulting config should have PlanckBlock = %v , but instead is %v", params.BSCChainConfig.PlanckBlock, config.PlanckBlock)
-	}
-}
-
-func TestSetDefaultBlockValues(t *testing.T) {
-	genesis := &Genesis{Config: &params.ChainConfig{ChainID: big.NewInt(66), HomesteadBlock: big.NewInt(11)}}
-	genesis.setDefaultBlockValues(params.BSCChainConfig)
-
-	// Make sure the non-nil block was not modified
-	if genesis.Config.HomesteadBlock.Cmp(big.NewInt(11)) != 0 {
-		t.Errorf("Homestead block should not have been modified. HomesteadBlock = %v", genesis.Config.HomesteadBlock)
-	}
-
-	// Spot check a few blocks
-	if genesis.Config.NielsBlock.Cmp(params.BSCChainConfig.NielsBlock) != 0 {
-		t.Errorf("Niels block not matching: in genesis = %v , in defaultConfig = %v", genesis.Config.NielsBlock, params.BSCChainConfig.NielsBlock)
-	}
-
-	if genesis.Config.NanoBlock.Cmp(params.BSCChainConfig.NanoBlock) != 0 {
-		t.Errorf("Nano block not matching: in genesis = %v , in defaultConfig = %v", genesis.Config.NanoBlock, params.BSCChainConfig.NanoBlock)
-	}
-
-	if genesis.Config.PlanckBlock.Cmp(params.BSCChainConfig.PlanckBlock) != 0 {
-		t.Errorf("Nano block not matching: in genesis = %v , in defaultConfig = %v", genesis.Config.PlanckBlock, params.BSCChainConfig.PlanckBlock)
-	}
-
-	// Lastly make sure non-block fields such as ChainID have not been modified
-	if genesis.Config.ChainID.Cmp(big.NewInt(66)) != 0 {
-		t.Errorf("ChainID should not have been modified. ChainID = %v", genesis.Config.ChainID)
-	}
-}
-
 func newDbConfig(scheme string) *trie.Config {
 	if scheme == rawdb.HashScheme {
 		return trie.HashDefaults
 	}
 	return &trie.Config{PathDB: pathdb.Defaults}
+}
+
+func TestVerkleGenesisCommit(t *testing.T) {
+	var verkleTime uint64 = 0
+	verkleConfig := &params.ChainConfig{
+		ChainID:                       big.NewInt(1),
+		HomesteadBlock:                big.NewInt(0),
+		DAOForkBlock:                  nil,
+		DAOForkSupport:                false,
+		EIP150Block:                   big.NewInt(0),
+		EIP155Block:                   big.NewInt(0),
+		EIP158Block:                   big.NewInt(0),
+		ByzantiumBlock:                big.NewInt(0),
+		ConstantinopleBlock:           big.NewInt(0),
+		PetersburgBlock:               big.NewInt(0),
+		IstanbulBlock:                 big.NewInt(0),
+		MuirGlacierBlock:              big.NewInt(0),
+		BerlinBlock:                   big.NewInt(0),
+		LondonBlock:                   big.NewInt(0),
+		ArrowGlacierBlock:             big.NewInt(0),
+		GrayGlacierBlock:              big.NewInt(0),
+		MergeNetsplitBlock:            nil,
+		ShanghaiTime:                  &verkleTime,
+		CancunTime:                    &verkleTime,
+		PragueTime:                    &verkleTime,
+		VerkleTime:                    &verkleTime,
+		TerminalTotalDifficulty:       big.NewInt(0),
+		TerminalTotalDifficultyPassed: true,
+		Ethash:                        nil,
+		Clique:                        nil,
+	}
+
+	genesis := &Genesis{
+		BaseFee:    big.NewInt(params.InitialBaseFee),
+		Config:     verkleConfig,
+		Timestamp:  verkleTime,
+		Difficulty: big.NewInt(0),
+		Alloc: GenesisAlloc{
+			{1}: {Balance: big.NewInt(1), Storage: map[common.Hash]common.Hash{{1}: {1}}},
+		},
+	}
+
+	expected := common.Hex2Bytes("14398d42be3394ff8d50681816a4b7bf8d8283306f577faba2d5bc57498de23b")
+	got := genesis.ToBlock().Root().Bytes()
+	if !bytes.Equal(got, expected) {
+		t.Fatalf("invalid genesis state root, expected %x, got %x", expected, got)
+	}
+
+	db := rawdb.NewMemoryDatabase()
+	triedb := trie.NewDatabase(db, &trie.Config{IsVerkle: true, PathDB: pathdb.Defaults})
+	block := genesis.MustCommit(db, triedb)
+	if !bytes.Equal(block.Root().Bytes(), expected) {
+		t.Fatalf("invalid genesis state root, expected %x, got %x", expected, got)
+	}
+
+	// Test that the trie is verkle
+	if !triedb.IsVerkle() {
+		t.Fatalf("expected trie to be verkle")
+	}
+
+	if !rawdb.ExistsAccountTrieNode(db, nil) {
+		t.Fatal("could not find node")
+	}
 }

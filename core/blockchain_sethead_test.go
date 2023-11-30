@@ -1971,6 +1971,7 @@ func testSetHeadWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme 
 	db, err := rawdb.Open(rawdb.OpenOptions{
 		Directory:         datadir,
 		AncientsDirectory: ancient,
+		Ephemeral:         true,
 	})
 	if err != nil {
 		t.Fatalf("Failed to create persistent database: %v", err)
@@ -1996,7 +1997,6 @@ func testSetHeadWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme 
 		config.SnapshotLimit = 256
 		config.SnapshotWait = true
 	}
-	config.TriesInMemory = 128
 	chain, err := NewBlockChain(db, config, gspec, nil, engine, vm.Config{}, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)

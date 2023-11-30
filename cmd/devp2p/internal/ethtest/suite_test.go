@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
 
-package ethtest // TOFIX
+package ethtest
 
 import (
 	"os"
@@ -35,6 +35,7 @@ var (
 )
 
 func TestEthSuite(t *testing.T) {
+	t.Parallel()
 	geth, err := runGeth()
 	if err != nil {
 		t.Fatalf("could not run geth: %v", err)
@@ -56,6 +57,7 @@ func TestEthSuite(t *testing.T) {
 }
 
 func TestSnapSuite(t *testing.T) {
+	t.Parallel()
 	geth, err := runGeth()
 	if err != nil {
 		t.Fatalf("could not run geth: %v", err)
@@ -80,11 +82,10 @@ func TestSnapSuite(t *testing.T) {
 func runGeth() (*node.Node, error) {
 	stack, err := node.New(&node.Config{
 		P2P: p2p.Config{
-			ListenAddr:    "127.0.0.1:0",
-			NoDiscovery:   true,
-			MaxPeers:      10, // in case a test requires multiple connections, can be changed in the future
-			MaxPeersPerIP: 10,
-			NoDial:        true,
+			ListenAddr:  "127.0.0.1:0",
+			NoDiscovery: true,
+			MaxPeers:    10, // in case a test requires multiple connections, can be changed in the future
+			NoDial:      true,
 		},
 	})
 	if err != nil {
@@ -117,11 +118,11 @@ func setupGeth(stack *node.Node) error {
 		TrieDirtyCache: 16,
 		TrieTimeout:    60 * time.Minute,
 		SnapshotCache:  10,
-		TriesInMemory:  128,
 	})
 	if err != nil {
 		return err
 	}
+	backend.SetSynced()
 
 	_, err = backend.BlockChain().InsertChain(chain.blocks[1:])
 	return err

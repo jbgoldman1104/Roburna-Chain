@@ -26,53 +26,39 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
-	"github.com/ethereum/go-ethereum/consensus/parlia"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
 	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/params"
 )
 
 // FullNodeGPO contains default gasprice oracle settings for full node.
 var FullNodeGPO = gasprice.Config{
-	Blocks:          20,
-	Percentile:      60,
-	MaxPrice:        gasprice.DefaultMaxPrice,
-	OracleThreshold: 1000,
-	IgnorePrice:     gasprice.DefaultIgnorePrice,
-}
-
-// LightClientGPO contains default gasprice oracle settings for light client.
-var LightClientGPO = gasprice.Config{
-	Blocks:      2,
-	Percentile:  60,
-	MaxPrice:    gasprice.DefaultMaxPrice,
-	IgnorePrice: gasprice.DefaultIgnorePrice,
+	Blocks:           20,
+	Percentile:       60,
+	MaxHeaderHistory: 1024,
+	MaxBlockHistory:  1024,
+	MaxPrice:         gasprice.DefaultMaxPrice,
+	IgnorePrice:      gasprice.DefaultIgnorePrice,
 }
 
 // Defaults contains default settings for use on the Ethereum main net.
 var Defaults = Config{
 	SyncMode:           downloader.SnapSync,
-	NetworkId:          1,
+	NetworkId:          0, // enable auto configuration of networkID == chainID
 	TxLookupLimit:      2350000,
 	TransactionHistory: 2350000,
 	StateHistory:       params.FullImmutabilityThreshold,
-	StateScheme:        rawdb.HashScheme,
 	LightPeers:         100,
 	DatabaseCache:      512,
 	TrieCleanCache:     154,
 	TrieDirtyCache:     256,
 	TrieTimeout:        60 * time.Minute,
-	TriesInMemory:      128,
-	TriesVerifyMode:    core.LocalVerify,
 	SnapshotCache:      102,
-	DiffBlock:          uint64(86400),
 	FilterLogCacheSize: 32,
 	Miner:              miner.DefaultConfig,
 	TxPool:             legacypool.DefaultConfig,
@@ -85,45 +71,34 @@ var Defaults = Config{
 
 //go:generate go run github.com/fjl/gencodec -type Config -formats toml -out gen_config.go
 
-// Config contains configuration options for of the ETH and LES protocols.
+// Config contains configuration options for ETH and LES protocols.
 type Config struct {
 	// The genesis block, which is inserted if the database is empty.
 	// If nil, the Ethereum main net block is used.
 	Genesis *core.Genesis `toml:",omitempty"`
 
-	// Protocol options
-	NetworkId uint64 // Network ID to use for selecting peers to connect to
+	// Network ID separates blockchains on the peer-to-peer networking level. When left
+	// zero, the chain ID is used as network ID.
+	NetworkId uint64
 	SyncMode  downloader.SyncMode
-
-	// DisablePeerTxBroadcast is an optional config and disabled by default, and usually you do not need it.
-	// When this flag is enabled, you are requesting remote peers to stop broadcasting new transactions to you, and
-	// it does not mean that your node will stop broadcasting transactions to remote peers.
-	// If your node does care about new mempool transactions (e.g., running rpc services without the need of mempool
-	// transactions) or is continuously under high pressure (e.g., mempool is always full), then you can consider
-	// to turn it on.
-	DisablePeerTxBroadcast bool
 
 	// This can be set to list of enrtree:// URLs which will be queried for
 	// for nodes to connect to.
-	EthDiscoveryURLs   []string
-	SnapDiscoveryURLs  []string
-	TrustDiscoveryURLs []string
-	BscDiscoveryURLs   []string
+	EthDiscoveryURLs  []string
+	SnapDiscoveryURLs []string
 
-	NoPruning           bool // Whether to disable pruning and flush everything to disk
-	NoPrefetch          bool
-	DirectBroadcast     bool
-	DisableSnapProtocol bool //Whether disable snap protocol
-	EnableTrustProtocol bool //Whether enable trust protocol
-	PipeCommit          bool
-	RangeLimit          bool
+	NoPruning  bool // Whether to disable pruning and flush everything to disk
+	NoPrefetch bool // Whether to disable prefetching and only load state on demand
 
 	// Deprecated, use 'TransactionHistory' instead.
 	TxLookupLimit      uint64 `toml:",omitempty"` // The maximum number of blocks from head whose tx indices are reserved.
 	TransactionHistory uint64 `toml:",omitempty"` // The maximum number of blocks from head whose tx indices are reserved.
 	StateHistory       uint64 `toml:",omitempty"` // The maximum number of blocks from head whose state histories are reserved.
-	StateScheme        string `toml:",omitempty"` // State scheme used to store ethereum state and merkle trie nodes on top
-	PathSyncFlush      bool   `toml:",omitempty"` // State scheme used to store ethereum state and merkle trie nodes on top
+
+	// State scheme represents the scheme used to store ethereum states and trie
+	// nodes on top. It can be 'hash', 'path', or none which means use the scheme
+	// consistent with persistent state.
+	StateScheme string `toml:",omitempty"`
 
 	// RequiredBlocks is a set of block number -> hash mappings which must be in the
 	// canonical chain of all remote peers. Setting the option makes geth verify the
@@ -143,25 +118,12 @@ type Config struct {
 	DatabaseHandles    int  `toml:"-"`
 	DatabaseCache      int
 	DatabaseFreezer    string
-	DatabaseDiff       string
-	PersistDiff        bool
-	DiffBlock          uint64
-	// PruneAncientData is an optional config and disabled by default, and usually you do not need it.
-	// When this flag is enabled, only keep the latest 9w blocks' data, the older blocks' data will be
-	// pruned instead of being dumped to freezerdb, the pruned data includes CanonicalHash, Header, Block,
-	// Receipt and TotalDifficulty.
-	// Notice: the PruneAncientData once be turned on, the get/chaindata/ancient dir will be removed,
-	// if restart without the pruneancient flag, the ancient data will start with the previous point that
-	// the oldest unpruned block number.
-	PruneAncientData bool
 
-	TrieCleanCache  int
-	TrieDirtyCache  int
-	TrieTimeout     time.Duration
-	SnapshotCache   int
-	TriesInMemory   uint64
-	TriesVerifyMode core.VerifyMode
-	Preimages       bool
+	TrieCleanCache int
+	TrieDirtyCache int
+	TrieTimeout    time.Duration
+	SnapshotCache  int
+	Preimages      bool
 
 	// This is the number of blocks for which logs will be cached in the filter system.
 	FilterLogCacheSize int
@@ -202,16 +164,13 @@ type Config struct {
 // CreateConsensusEngine creates a consensus engine for the given chain config.
 // Clique is allowed for now to live standalone, but ethash is forbidden and can
 // only exist on already merged networks.
-func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, ee *ethapi.BlockChainAPI, genesisHash common.Hash) (consensus.Engine, error) {
-	if config.Parlia != nil {
-		return parlia.New(config, db, ee, genesisHash), nil
-	}
+func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database) (consensus.Engine, error) {
 	// If proof-of-authority is requested, set it up
 	if config.Clique != nil {
-		return clique.New(config.Clique, db), nil
+		return beacon.New(clique.New(config.Clique, db)), nil
 	}
 	// If defaulting to proof-of-work, enforce an already merged network since
-	// we cannot run PoW algorithms and more, so we cannot even follow a chain
+	// we cannot run PoW algorithms anymore, so we cannot even follow a chain
 	// not coordinated by a beacon node.
 	if !config.TerminalTotalDifficultyPassed {
 		return nil, errors.New("ethash is only supported as a historical component of already merged networks")

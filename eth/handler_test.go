@@ -50,9 +50,8 @@ var (
 type testTxPool struct {
 	pool map[common.Hash]*types.Transaction // Hash map of collected transactions
 
-	txFeed       event.Feed   // Notification feed to allow waiting for inclusion
-	reannoTxFeed event.Feed   // Notification feed to trigger reannouce
-	lock         sync.RWMutex // Protects the transaction pool
+	txFeed event.Feed   // Notification feed to allow waiting for inclusion
+	lock   sync.RWMutex // Protects the transaction pool
 }
 
 // newTestTxPool creates a mock transaction pool.
@@ -73,43 +72,22 @@ func (p *testTxPool) Has(hash common.Hash) bool {
 
 // Get retrieves the transaction from local txpool with given
 // tx hash.
-func (p *testTxPool) Get(hash common.Hash) *txpool.Transaction {
+func (p *testTxPool) Get(hash common.Hash) *types.Transaction {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-
-	if tx := p.pool[hash]; tx != nil {
-		return &txpool.Transaction{Tx: tx}
-	}
-	return nil
+	return p.pool[hash]
 }
 
 // Add appends a batch of transactions to the pool, and notifies any
 // listeners if the addition channel is non nil
-func (p *testTxPool) Add(txs []*txpool.Transaction, local bool, sync bool) []error {
-	unwrapped := make([]*types.Transaction, len(txs))
-	for i, tx := range txs {
-		unwrapped[i] = tx.Tx
-	}
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	for _, tx := range unwrapped {
-		p.pool[tx.Hash()] = tx
-	}
-
-	p.txFeed.Send(core.NewTxsEvent{Txs: unwrapped})
-	return make([]error, len(unwrapped))
-}
-
-// ReannouceTransactions announce the transactions to some peers.
-func (p *testTxPool) ReannouceTransactions(txs []*types.Transaction) []error {
+func (p *testTxPool) Add(txs []*types.Transaction, local bool, sync bool) []error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
 	for _, tx := range txs {
 		p.pool[tx.Hash()] = tx
 	}
-	p.reannoTxFeed.Send(core.ReannoTxsEvent{Txs: txs})
+	p.txFeed.Send(core.NewTxsEvent{Txs: txs})
 	return make([]error, len(txs))
 }
 
@@ -131,37 +109,32 @@ func (p *testTxPool) Pending(enforceTips bool) map[common.Address][]*txpool.Lazy
 		for _, tx := range batch {
 			pending[addr] = append(pending[addr], &txpool.LazyTransaction{
 				Hash:      tx.Hash(),
-				Tx:        &txpool.Transaction{Tx: tx},
+				Tx:        tx,
 				Time:      tx.Time(),
 				GasFeeCap: tx.GasFeeCap(),
 				GasTipCap: tx.GasTipCap(),
+				Gas:       tx.Gas(),
+				BlobGas:   tx.BlobGas(),
 			})
 		}
 	}
 	return pending
 }
 
-// SubscribeNewTxsEvent should return an event subscription of NewTxsEvent and
+// SubscribeTransactions should return an event subscription of NewTxsEvent and
 // send events to the given channel.
-func (p *testTxPool) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
+func (p *testTxPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription {
 	return p.txFeed.Subscribe(ch)
-}
-
-// SubscribeReannoTxsEvent should return an event subscription of ReannoTxsEvent and
-// send events to the given channel.
-func (p *testTxPool) SubscribeReannoTxsEvent(ch chan<- core.ReannoTxsEvent) event.Subscription {
-	return p.reannoTxFeed.Subscribe(ch)
 }
 
 // testHandler is a live implementation of the Ethereum protocol handler, just
 // preinitialized with some sane testing defaults and the transaction pool mocked
 // out.
 type testHandler struct {
-	db       ethdb.Database
-	chain    *core.BlockChain
-	txpool   *testTxPool
-	votepool *testVotePool
-	handler  *handler
+	db      ethdb.Database
+	chain   *core.BlockChain
+	txpool  *testTxPool
+	handler *handler
 }
 
 // newTestHandler creates a new handler for testing purposes with no blocks.
@@ -185,26 +158,23 @@ func newTestHandlerWithBlocks(blocks int) *testHandler {
 		panic(err)
 	}
 	txpool := newTestTxPool()
-	votepool := newTestVotePool()
 
 	handler, _ := newHandler(&handlerConfig{
 		Database:   db,
 		Chain:      chain,
 		TxPool:     txpool,
 		Merger:     consensus.NewMerger(rawdb.NewMemoryDatabase()),
-		VotePool:   votepool,
 		Network:    1,
 		Sync:       downloader.SnapSync,
 		BloomCache: 1,
 	})
-	handler.Start(1000, 3)
+	handler.Start(1000)
 
 	return &testHandler{
-		db:       db,
-		chain:    chain,
-		txpool:   txpool,
-		votepool: votepool,
-		handler:  handler,
+		db:      db,
+		chain:   chain,
+		txpool:  txpool,
+		handler: handler,
 	}
 }
 
@@ -212,46 +182,4 @@ func newTestHandlerWithBlocks(blocks int) *testHandler {
 func (b *testHandler) close() {
 	b.handler.Stop()
 	b.chain.Stop()
-}
-
-// newTestVotePool creates a mock vote pool.
-type testVotePool struct {
-	pool map[common.Hash]*types.VoteEnvelope // Hash map of collected votes
-
-	voteFeed event.Feed   // Notification feed to allow waiting for inclusion
-	lock     sync.RWMutex // Protects the vote pool
-}
-
-// newTestVotePool creates a mock vote pool.
-func newTestVotePool() *testVotePool {
-	return &testVotePool{
-		pool: make(map[common.Hash]*types.VoteEnvelope),
-	}
-}
-
-func (t *testVotePool) PutVote(vote *types.VoteEnvelope) {
-	t.lock.Lock()
-	defer t.lock.Unlock()
-
-	t.pool[vote.Hash()] = vote
-	t.voteFeed.Send(core.NewVoteEvent{Vote: vote})
-}
-
-func (t *testVotePool) FetchVoteByBlockHash(blockHash common.Hash) []*types.VoteEnvelope {
-	panic("implement me")
-}
-
-func (t *testVotePool) GetVotes() []*types.VoteEnvelope {
-	t.lock.RLock()
-	defer t.lock.RUnlock()
-
-	votes := make([]*types.VoteEnvelope, 0, len(t.pool))
-	for _, vote := range t.pool {
-		votes = append(votes, vote)
-	}
-	return votes
-}
-
-func (t *testVotePool) SubscribeNewVoteEvent(ch chan<- core.NewVoteEvent) event.Subscription {
-	return t.voteFeed.Subscribe(ch)
 }

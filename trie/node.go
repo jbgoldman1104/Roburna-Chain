@@ -112,11 +112,6 @@ func (n rawNode) EncodeRLP(w io.Writer) error {
 	return err
 }
 
-func NodeString(hash, buf []byte) string {
-	node := mustDecodeNode(hash, buf)
-	return node.fstring("NodeString: ")
-}
-
 // mustDecodeNode is a wrapper of decodeNode and panic if any error is encountered.
 func mustDecodeNode(hash, buf []byte) node {
 	n, err := decodeNode(hash, buf)

@@ -18,22 +18,14 @@ package vm
 
 import (
 	"math/big"
-	"sync"
 	"sync/atomic"
-
-	"github.com/holiman/uint256"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/holiman/uint256"
 )
-
-var EvmPool = sync.Pool{
-	New: func() interface{} {
-		return &EVM{}
-	},
-}
 
 type (
 	// CanTransferFunc is the signature of a transfer guard function
@@ -50,18 +42,6 @@ func (evm *EVM) precompile(addr common.Address) (PrecompiledContract, bool) {
 	switch {
 	case evm.chainRules.IsCancun:
 		precompiles = PrecompiledContractsCancun
-	case evm.chainRules.IsHertz:
-		precompiles = PrecompiledContractsHertz
-	case evm.chainRules.IsPlato:
-		precompiles = PrecompiledContractsPlato
-	case evm.chainRules.IsLuban:
-		precompiles = PrecompiledContractsLuban
-	case evm.chainRules.IsPlanck:
-		precompiles = PrecompiledContractsPlanck
-	case evm.chainRules.IsMoran:
-		precompiles = PrecompiledContractsMoran
-	case evm.chainRules.IsNano:
-		precompiles = PrecompiledContractsNano
 	case evm.chainRules.IsBerlin:
 		precompiles = PrecompiledContractsBerlin
 	case evm.chainRules.IsIstanbul:
@@ -87,14 +67,14 @@ type BlockContext struct {
 	GetHash GetHashFunc
 
 	// Block information
-	Coinbase      common.Address // Provides information for COINBASE
-	GasLimit      uint64         // Provides information for GASLIMIT
-	BlockNumber   *big.Int       // Provides information for NUMBER
-	Time          uint64         // Provides information for TIME
-	Difficulty    *big.Int       // Provides information for DIFFICULTY
-	BaseFee       *big.Int       // Provides information for BASEFEE
-	Random        *common.Hash   // Provides information for PREVRANDAO
-	ExcessBlobGas *uint64        // ExcessBlobGas field in the header, needed to compute the data
+	Coinbase    common.Address // Provides information for COINBASE
+	GasLimit    uint64         // Provides information for GASLIMIT
+	BlockNumber *big.Int       // Provides information for NUMBER
+	Time        uint64         // Provides information for TIME
+	Difficulty  *big.Int       // Provides information for DIFFICULTY
+	BaseFee     *big.Int       // Provides information for BASEFEE (0 if vm runs with NoBaseFee flag and 0 gas price)
+	BlobBaseFee *big.Int       // Provides information for BLOBBASEFEE (0 if vm runs with NoBaseFee flag and 0 blob gas price)
+	Random      *common.Hash   // Provides information for PREVRANDAO
 }
 
 // TxContext provides the EVM with information about a transaction.
@@ -102,8 +82,9 @@ type BlockContext struct {
 type TxContext struct {
 	// Message information
 	Origin     common.Address // Provides information for ORIGIN
-	GasPrice   *big.Int       // Provides information for GASPRICE
+	GasPrice   *big.Int       // Provides information for GASPRICE (and is used to zero the basefee if NoBaseFee is set)
 	BlobHashes []common.Hash  // Provides information for BLOBHASH
+	BlobFeeCap *big.Int       // Is used to zero the blobbasefee if NoBaseFee is set
 }
 
 // EVM is the Ethereum Virtual Machine base object and provides
@@ -145,19 +126,26 @@ type EVM struct {
 // NewEVM returns a new EVM. The returned EVM is not thread safe and should
 // only ever be used *once*.
 func NewEVM(blockCtx BlockContext, txCtx TxContext, statedb StateDB, chainConfig *params.ChainConfig, config Config) *EVM {
-	evm := EvmPool.Get().(*EVM)
-	evm.Context = blockCtx
-	evm.TxContext = txCtx
-	evm.StateDB = statedb
-	evm.Config = config
-	evm.chainConfig = chainConfig
-	evm.chainRules = chainConfig.Rules(blockCtx.BlockNumber, blockCtx.Random != nil, blockCtx.Time)
-	evm.abort.Store(false)
-	evm.callGasTemp = 0
-	evm.depth = 0
-
+	// If basefee tracking is disabled (eth_call, eth_estimateGas, etc), and no
+	// gas prices were specified, lower the basefee to 0 to avoid breaking EVM
+	// invariants (basefee < feecap)
+	if config.NoBaseFee {
+		if txCtx.GasPrice.BitLen() == 0 {
+			blockCtx.BaseFee = new(big.Int)
+		}
+		if txCtx.BlobFeeCap != nil && txCtx.BlobFeeCap.BitLen() == 0 {
+			blockCtx.BlobBaseFee = new(big.Int)
+		}
+	}
+	evm := &EVM{
+		Context:     blockCtx,
+		TxContext:   txCtx,
+		StateDB:     statedb,
+		Config:      config,
+		chainConfig: chainConfig,
+		chainRules:  chainConfig.Rules(blockCtx.BlockNumber, blockCtx.Random != nil, blockCtx.Time),
+	}
 	evm.interpreter = NewEVMInterpreter(evm)
-
 	return evm
 }
 
@@ -182,14 +170,6 @@ func (evm *EVM) Cancelled() bool {
 // Interpreter returns the current interpreter
 func (evm *EVM) Interpreter() *EVMInterpreter {
 	return evm.interpreter
-}
-
-// SetBlockContext updates the block context of the EVM.
-func (evm *EVM) SetBlockContext(blockCtx BlockContext) {
-	evm.Context = blockCtx
-	num := blockCtx.BlockNumber
-	timestamp := blockCtx.Time
-	evm.chainRules = evm.chainConfig.Rules(num, blockCtx.Random != nil, timestamp)
 }
 
 // Call executes the contract associated with the addr with the given input as
@@ -270,7 +250,7 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 			gas = 0
 		}
 		// TODO: consider clearing up unused snapshots:
-		// } else {
+		//} else {
 		//	evm.StateDB.DiscardSnapshot(snapshot)
 	}
 	return ret, gas, err

@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -270,15 +269,21 @@ func (beacon *Beacon) verifyHeader(chain consensus.ChainHeaderReader, header, pa
 	if !shanghai && header.WithdrawalsHash != nil {
 		return fmt.Errorf("invalid withdrawalsHash: have %x, expected nil", header.WithdrawalsHash)
 	}
-	// Verify the existence / non-existence of excessBlobGas
+	// Verify the existence / non-existence of cancun-specific header fields
 	cancun := chain.Config().IsCancun(header.Number, header.Time)
-	if !cancun && header.ExcessBlobGas != nil {
-		return fmt.Errorf("invalid excessBlobGas: have %d, expected nil", header.ExcessBlobGas)
-	}
-	if !cancun && header.BlobGasUsed != nil {
-		return fmt.Errorf("invalid blobGasUsed: have %d, expected nil", header.BlobGasUsed)
-	}
-	if cancun {
+	if !cancun {
+		switch {
+		case header.ExcessBlobGas != nil:
+			return fmt.Errorf("invalid excessBlobGas: have %d, expected nil", header.ExcessBlobGas)
+		case header.BlobGasUsed != nil:
+			return fmt.Errorf("invalid blobGasUsed: have %d, expected nil", header.BlobGasUsed)
+		case header.ParentBeaconRoot != nil:
+			return fmt.Errorf("invalid parentBeaconRoot, have %#x, expected nil", header.ParentBeaconRoot)
+		}
+	} else {
+		if header.ParentBeaconRoot == nil {
+			return errors.New("header is missing beaconRoot")
+		}
 		if err := eip4844.VerifyEIP4844Header(parent, header); err != nil {
 			return err
 		}
@@ -341,16 +346,11 @@ func (beacon *Beacon) Prepare(chain consensus.ChainHeaderReader, header *types.H
 	return nil
 }
 
-func (beacon *Beacon) Delay(_ consensus.ChainReader, _ *types.Header, _ *time.Duration) *time.Duration {
-	return nil
-}
-
-// Finalize implements consensus.Engine, setting the final state on the header
-func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs *[]*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal, _ *[]*types.Receipt, _ *[]*types.Transaction, _ *uint64) error {
-	// Finalize is different with Prepare, it can be used in both block verification.
+// Finalize implements consensus.Engine and processes withdrawals on top.
+func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal) {
 	if !beacon.IsPoSHeader(header) {
-		beacon.ethone.Finalize(chain, header, state, txs, uncles, nil, nil, nil, nil)
-		return nil
+		beacon.ethone.Finalize(chain, header, state, txs, uncles, nil)
+		return
 	}
 	// Withdrawals processing.
 	for _, w := range withdrawals {
@@ -360,13 +360,11 @@ func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.
 		state.AddBalance(w.Address, amount)
 	}
 	// No block reward which is issued by consensus layer instead.
-	return nil
 }
 
 // FinalizeAndAssemble implements consensus.Engine, setting the final state and
 // assembling the block.
-func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt, withdrawals []*types.Withdrawal) (*types.Block, []*types.Receipt, error) {
-	// FinalizeAndAssemble is different with Prepare, it can be used in both block generation.
+func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt, withdrawals []*types.Withdrawal) (*types.Block, error) {
 	if !beacon.IsPoSHeader(header) {
 		return beacon.ethone.FinalizeAndAssemble(chain, header, state, txs, uncles, receipts, nil)
 	}
@@ -378,16 +376,17 @@ func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, hea
 		}
 	} else {
 		if len(withdrawals) > 0 {
-			return nil, nil, errors.New("withdrawals set before Shanghai activation")
+			return nil, errors.New("withdrawals set before Shanghai activation")
 		}
 	}
 	// Finalize and assemble the block.
-	beacon.Finalize(chain, header, state, &txs, uncles, withdrawals, nil, nil, nil)
+	beacon.Finalize(chain, header, state, txs, uncles, withdrawals)
 
 	// Assign the final state root to header.
 	header.Root = state.IntermediateRoot(true)
 
-	return types.NewBlockWithWithdrawals(header, txs, uncles, receipts, withdrawals, trie.NewStackTrie(nil)), receipts, nil
+	// Assemble and return the final block.
+	return types.NewBlockWithWithdrawals(header, txs, uncles, receipts, withdrawals, trie.NewStackTrie(nil)), nil
 }
 
 // Seal generates a new sealing request for the given input block and pushes

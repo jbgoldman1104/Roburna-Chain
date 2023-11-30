@@ -17,25 +17,16 @@
 package vm
 
 import (
-	"sync"
-
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 )
 
-var EVMInterpreterPool = sync.Pool{
-	New: func() interface{} {
-		return &EVMInterpreter{}
-	},
-}
-
 // Config are the configuration options for the Interpreter
 type Config struct {
 	Tracer                  EVMLogger // Opcode logger
 	NoBaseFee               bool      // Forces the EIP-1559 baseFee to 0 (needed for 0 price calls)
-	NoRecursion             bool      // Disables call, callcode, delegate call and create
 	EnablePreimageRecording bool      // Enables recording of SHA3/keccak preimages
 	ExtraEips               []int     // Additional EIPS that are to be enabled
 }
@@ -54,7 +45,7 @@ type EVMInterpreter struct {
 	table *JumpTable
 
 	hasher    crypto.KeccakState // Keccak256 hasher instance shared across opcodes
-	hasherBuf common.Hash        // Keccak256 hasher result array shared aross opcodes
+	hasherBuf common.Hash        // Keccak256 hasher result array shared across opcodes
 
 	readOnly   bool   // Whether to throw on stateful modifications
 	returnData []byte // Last CALL's return data for subsequent reuse
@@ -90,7 +81,6 @@ func NewEVMInterpreter(evm *EVM) *EVMInterpreter {
 	default:
 		table = &frontierInstructionSet
 	}
-
 	var extraEips []int
 	if len(evm.Config.ExtraEips) > 0 {
 		// Deep-copy jumptable to prevent modification of opcodes in other tables
@@ -105,13 +95,7 @@ func NewEVMInterpreter(evm *EVM) *EVMInterpreter {
 		}
 	}
 	evm.Config.ExtraEips = extraEips
-	evmInterpreter := EVMInterpreterPool.Get().(*EVMInterpreter)
-	evmInterpreter.evm = evm
-	evmInterpreter.table = table
-	evmInterpreter.readOnly = false
-	evmInterpreter.returnData = nil
-
-	return evmInterpreter
+	return &EVMInterpreter{evm: evm, table: table}
 }
 
 // Run loops and evaluates the contract's code with the given input data and returns
@@ -223,7 +207,6 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 				}
 			}
 			// Consume the gas and return an error if not enough gas is available.
-			// cost is explicitly set so that the capture state defer method can get the proper cost
 			// cost is explicitly set so that the capture state defer method can get the proper cost
 			var dynamicCost uint64
 			dynamicCost, err = operation.dynamicGas(in.evm, contract, stack, mem, memorySize)

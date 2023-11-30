@@ -115,6 +115,7 @@ type stTransaction struct {
 	GasLimit             []uint64            `json:"gasLimit"`
 	Value                []string            `json:"value"`
 	PrivateKey           []byte              `json:"secretKey"`
+	Sender               *common.Address     `json:"sender"`
 	BlobVersionedHashes  []common.Hash       `json:"blobVersionedHashes,omitempty"`
 	BlobGasFeeCap        *big.Int            `json:"maxFeePerBlobGas,omitempty"`
 }
@@ -198,6 +199,9 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config, snapshotter bo
 
 		if triedb != nil {
 			triedb.Close()
+		}
+		if snaps != nil {
+			snaps.Release()
 		}
 	}()
 	checkedErr := t.checkError(subtest, err)
@@ -289,18 +293,15 @@ func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapsh
 	if err != nil {
 		statedb.RevertToSnapshot(snapshot)
 	}
-
-	// Commit block
 	// Add 0-value mining reward. This only makes a difference in the cases
 	// where
 	// - the coinbase self-destructed, or
 	// - there are only 'bad' transactions, which aren't executed. In those cases,
 	//   the coinbase gets no txfee, so isn't created, and thus needs to be touched
 	statedb.AddBalance(block.Coinbase(), new(big.Int))
-	// And _now_ get the state root
-	root := statedb.IntermediateRoot(config.IsEIP158(block.Number()))
-	statedb.SetExpectedStateRoot(root)
-	root, _, err = statedb.Commit(block.NumberU64(), nil)
+
+	// Commit state mutations into database.
+	root, _ := statedb.Commit(block.NumberU64(), config.IsEIP158(block.Number()))
 	return triedb, snaps, statedb, root, err
 }
 
@@ -327,9 +328,7 @@ func MakePreState(db ethdb.Database, accounts core.GenesisAlloc, snapshotter boo
 		}
 	}
 	// Commit and re-open to start with a clean state.
-	statedb.Finalise(false)
-	statedb.AccountsIntermediateRoot()
-	root, _, _ := statedb.Commit(0, nil)
+	root, _ := statedb.Commit(0, false)
 
 	var snaps *snapshot.Tree
 	if snapshotter {
@@ -339,7 +338,7 @@ func MakePreState(db ethdb.Database, accounts core.GenesisAlloc, snapshotter boo
 			NoBuild:    false,
 			AsyncBuild: false,
 		}
-		snaps, _ = snapshot.New(snapconfig, db, sdb.TrieDB(), root, 128, false)
+		snaps, _ = snapshot.New(snapconfig, db, triedb, root)
 	}
 	statedb, _ = state.New(root, sdb, snaps)
 	return triedb, snaps, statedb
@@ -364,9 +363,12 @@ func (t *StateTest) genesis(config *params.ChainConfig) *core.Genesis {
 }
 
 func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Message, error) {
-	// Derive sender from private key if present.
 	var from common.Address
-	if len(tx.PrivateKey) > 0 {
+	// If 'sender' field is present, use that
+	if tx.Sender != nil {
+		from = *tx.Sender
+	} else if len(tx.PrivateKey) > 0 {
+		// Derive sender from private key if needed.
 		key, err := crypto.ToECDSA(tx.PrivateKey)
 		if err != nil {
 			return nil, fmt.Errorf("invalid private key: %v", err)

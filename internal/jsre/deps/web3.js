@@ -1033,7 +1033,7 @@ var formatOutputInt = function (param) {
  *
  * @method formatOutputUInt
  * @param {SolidityParam}
- * @returns {BigNumeber} right-aligned output bytes formatted to uint
+ * @returns {BigNumber} right-aligned output bytes formatted to uint
  */
 var formatOutputUInt = function (param) {
     var value = param.staticPart() || "0";
@@ -3820,39 +3820,6 @@ var outputTransactionReceiptFormatter = function (receipt){
 };
 
 /**
- * Formats the output of a transaction original data and receipt to its proper values
- *
- * @method outputTransactionDataAndReceiptFormatter
- * @param {Object} dataAndReceipt
- * @returns {Object}
- */
-var outputTransactionDataAndReceiptFormatter = function (dataAndReceipt){
-  if(dataAndReceipt.receipt.blockNumber !== null)
-    dataAndReceipt.receipt.blockNumber = utils.toDecimal(dataAndReceipt.receipt.blockNumber);
-  if(dataAndReceipt.receipt.transactionIndex !== null)
-    dataAndReceipt.receipt.transactionIndex = utils.toDecimal(dataAndReceipt.receipt.transactionIndex);
-  dataAndReceipt.receipt.cumulativeGasUsed = utils.toDecimal(dataAndReceipt.receipt.cumulativeGasUsed);
-  dataAndReceipt.receipt.gasUsed = utils.toDecimal(dataAndReceipt.receipt.gasUsed);
-
-  if(utils.isArray(dataAndReceipt.receipt.logs)) {
-    dataAndReceipt.receipt.logs = dataAndReceipt.receipt.logs.map(function(log){
-      return outputLogFormatter(log);
-    });
-  }
-
-  if(dataAndReceipt.txData.blockNumber !== null)
-    dataAndReceipt.txData.blockNumber = utils.toDecimal(dataAndReceipt.txData.blockNumber);
-  if(dataAndReceipt.txData.transactionIndex !== null)
-    dataAndReceipt.txData.transactionIndex = utils.toDecimal(dataAndReceipt.txData.transactionIndex);
-  dataAndReceipt.txData.nonce = utils.toDecimal(dataAndReceipt.txData.nonce);
-  dataAndReceipt.txData.gas = utils.toDecimal(dataAndReceipt.txData.gas);
-  dataAndReceipt.txData.gasPrice = utils.toBigNumber(dataAndReceipt.txData.gasPrice);
-  dataAndReceipt.txData.value = utils.toBigNumber(dataAndReceipt.txData.value);
-
-  return dataAndReceipt;
-};
-
-/**
  * Formats the output of a block to its proper values
  *
  * @method outputBlockFormatter
@@ -4008,7 +3975,6 @@ module.exports = {
     outputBigNumberFormatter: outputBigNumberFormatter,
     outputTransactionFormatter: outputTransactionFormatter,
     outputTransactionReceiptFormatter: outputTransactionReceiptFormatter,
-    outputTransactionDataAndReceiptFormatter: outputTransactionDataAndReceiptFormatter,
     outputBlockFormatter: outputBlockFormatter,
     outputLogFormatter: outputLogFormatter,
     outputPostFormatter: outputPostFormatter,
@@ -5395,27 +5361,6 @@ var methods = function () {
         outputFormatter: formatters.outputTransactionFormatter
     });
 
-    var getTransactionDataAndReceipt = new Method({
-      name: 'getTransactionDataAndReceipt',
-      call: 'eth_getTransactionDataAndReceipt',
-      params: 1,
-      outputFormatter: formatters.outputTransactionDataAndReceiptFormatter
-    });
-
-    var getTransactionsByBlockNumber = new Method({
-      name: 'getTransactionsByBlockNumber',
-      call: 'eth_getTransactionsByBlockNumber',
-      params: 1,
-      outputFormatter: formatters.outputTransactionFormatter
-    });
-
-    var getTransactionReceiptsByBlockNumber = new Method({
-      name: 'getTransactionReceiptsByBlockNumber',
-      call: 'eth_getTransactionReceiptsByBlockNumber',
-      params: 1,
-      outputFormatter: formatters.outputTransactionReceiptFormatter
-    });
-
     var getTransactionReceipt = new Method({
         name: 'getTransactionReceipt',
         call: 'eth_getTransactionReceipt',
@@ -5435,13 +5380,6 @@ var methods = function () {
         name: 'sendRawTransaction',
         call: 'eth_sendRawTransaction',
         params: 1,
-        inputFormatter: [null]
-    });
-
-    var sendRawTransactionConditional = new Method({
-        name: 'sendRawTransactionConditional',
-        call: 'eth_sendRawTransactionConditional',
-        params: 2,
         inputFormatter: [null]
     });
 
@@ -5522,15 +5460,11 @@ var methods = function () {
         getBlockUncleCount,
         getTransaction,
         getTransactionFromBlock,
-        getTransactionsByBlockNumber,
-        getTransactionReceiptsByBlockNumber,
-        getTransactionDataAndReceipt,
         getTransactionReceipt,
         getTransactionCount,
         call,
         estimateGas,
         sendRawTransaction,
-        sendRawTransactionConditional,
         signTransaction,
         sendTransaction,
         sign,

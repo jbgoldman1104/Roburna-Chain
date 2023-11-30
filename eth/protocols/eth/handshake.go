@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/gopool"
 	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -37,13 +36,13 @@ const (
 
 // Handshake executes the eth protocol handshake, negotiating version number,
 // network IDs, difficulties, head and genesis blocks.
-func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis common.Hash, forkID forkid.ID, forkFilter forkid.Filter, extension *UpgradeStatusExtension) error {
+func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis common.Hash, forkID forkid.ID, forkFilter forkid.Filter) error {
 	// Send out own handshake in a new thread
 	errc := make(chan error, 2)
 
 	var status StatusPacket // safe to read after two values have been received from errc
 
-	gopool.Submit(func() {
+	go func() {
 		errc <- p2p.Send(p.rw, StatusMsg, &StatusPacket{
 			ProtocolVersion: uint32(p.version),
 			NetworkID:       network,
@@ -52,10 +51,10 @@ func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 			Genesis:         genesis,
 			ForkID:          forkID,
 		})
-	})
-	gopool.Submit(func() {
+	}()
+	go func() {
 		errc <- p.readStatus(network, &status, genesis, forkFilter)
-	})
+	}()
 	timeout := time.NewTimer(handshakeTimeout)
 	defer timeout.Stop()
 	for i := 0; i < 2; i++ {
@@ -71,49 +70,6 @@ func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 		}
 	}
 	p.td, p.head = status.TD, status.Head
-
-	if p.version >= ETH67 {
-		var upgradeStatus UpgradeStatusPacket // safe to read after two values have been received from errc
-		if extension == nil {
-			extension = &UpgradeStatusExtension{}
-		}
-		extensionRaw, err := extension.Encode()
-		if err != nil {
-			return err
-		}
-
-		gopool.Submit(func() {
-			errc <- p2p.Send(p.rw, UpgradeStatusMsg, &UpgradeStatusPacket{
-				Extension: extensionRaw,
-			})
-		})
-		gopool.Submit(func() {
-			errc <- p.readUpgradeStatus(&upgradeStatus)
-		})
-		timeout := time.NewTimer(handshakeTimeout)
-		defer timeout.Stop()
-		for i := 0; i < 2; i++ {
-			select {
-			case err := <-errc:
-				if err != nil {
-					return err
-				}
-			case <-timeout.C:
-				return p2p.DiscReadTimeout
-			}
-		}
-
-		extension, err := upgradeStatus.GetExtension()
-		if err != nil {
-			return err
-		}
-		p.statusExtension = extension
-
-		if p.statusExtension.DisablePeerTxBroadcast {
-			p.Log().Debug("peer does not need broadcast txs, closing broadcast routines")
-			p.CloseTxBroadcast()
-		}
-	}
 
 	// TD at mainnet block #7753254 is 76 bits. If it becomes 100 million times
 	// larger, it will still fit within 100 bits
@@ -150,23 +106,6 @@ func (p *Peer) readStatus(network uint64, status *StatusPacket, genesis common.H
 	}
 	if err := forkFilter(status.ForkID); err != nil {
 		return fmt.Errorf("%w: %v", errForkIDRejected, err)
-	}
-	return nil
-}
-
-func (p *Peer) readUpgradeStatus(status *UpgradeStatusPacket) error {
-	msg, err := p.rw.ReadMsg()
-	if err != nil {
-		return err
-	}
-	if msg.Code != UpgradeStatusMsg {
-		return fmt.Errorf("%w: upgrade status msg has code %x (!= %x)", errNoStatusMsg, msg.Code, UpgradeStatusMsg)
-	}
-	if msg.Size > maxMessageSize {
-		return fmt.Errorf("%w: %v > %v", errMsgTooLarge, msg.Size, maxMessageSize)
-	}
-	if err := msg.Decode(&status); err != nil {
-		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
 	return nil
 }

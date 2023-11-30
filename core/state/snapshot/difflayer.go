@@ -119,9 +119,6 @@ type diffLayer struct {
 	storageList map[common.Hash][]common.Hash          // List of storage slots for iterated retrievals, one per account. Any existing lists are sorted if non-nil
 	storageData map[common.Hash]map[common.Hash][]byte // Keyed storage slots for direct retrieval. one per account (nil means deleted)
 
-	verifiedCh chan struct{} // the difflayer is verified when verifiedCh is nil or closed
-	valid      bool          // mark the difflayer is valid or not.
-
 	diffed *bloomfilter.Filter // Bloom filter tracking all the diffed items up to the disk layer
 
 	lock sync.RWMutex
@@ -172,7 +169,7 @@ func (h storageBloomHasher) Sum64() uint64 {
 
 // newDiffLayer creates a new diff on top of an existing snapshot, whether that's a low
 // level persistent database or a hierarchical diff already.
-func newDiffLayer(parent snapshot, root common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storage map[common.Hash]map[common.Hash][]byte, verified chan struct{}) *diffLayer {
+func newDiffLayer(parent snapshot, root common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storage map[common.Hash]map[common.Hash][]byte) *diffLayer {
 	// Create the new layer with some pre-allocated data segments
 	dl := &diffLayer{
 		parent:      parent,
@@ -181,9 +178,7 @@ func newDiffLayer(parent snapshot, root common.Hash, destructs map[common.Hash]s
 		accountData: accounts,
 		storageData: storage,
 		storageList: make(map[common.Hash][]common.Hash),
-		verifiedCh:  verified,
 	}
-
 	switch parent := parent.(type) {
 	case *diskLayer:
 		dl.rebloom(parent)
@@ -192,7 +187,6 @@ func newDiffLayer(parent snapshot, root common.Hash, destructs map[common.Hash]s
 	default:
 		panic("unknown parent type")
 	}
-
 	// Sanity check that accounts or storage slots are never nil
 	for accountHash, blob := range accounts {
 		if blob == nil {
@@ -263,39 +257,6 @@ func (dl *diffLayer) Root() common.Hash {
 	return dl.root
 }
 
-// WaitAndGetVerifyRes will wait until the diff layer been verified and return the verification result
-func (dl *diffLayer) WaitAndGetVerifyRes() bool {
-	if dl.verifiedCh == nil {
-		return true
-	}
-	<-dl.verifiedCh
-	return dl.valid
-}
-
-func (dl *diffLayer) MarkValid() {
-	dl.valid = true
-}
-
-// Represent whether the difflayer is been verified, does not means it is a valid or invalid difflayer
-func (dl *diffLayer) Verified() bool {
-	if dl.verifiedCh == nil {
-		return true
-	}
-	select {
-	case <-dl.verifiedCh:
-		return true
-	default:
-		return false
-	}
-}
-
-func (dl *diffLayer) CorrectAccounts(accounts map[common.Hash][]byte) {
-	dl.lock.Lock()
-	defer dl.lock.Unlock()
-
-	dl.accountData = accounts
-}
-
 // Parent returns the subsequent layer of a diff layer.
 func (dl *diffLayer) Parent() snapshot {
 	dl.lock.RLock()
@@ -325,24 +286,6 @@ func (dl *diffLayer) Account(hash common.Hash) (*types.SlimAccount, error) {
 		panic(err)
 	}
 	return account, nil
-}
-
-// Accounts directly retrieves all accounts in current snapshot in
-// the snapshot slim data format.
-func (dl *diffLayer) Accounts() (map[common.Hash]*types.SlimAccount, error) {
-	dl.lock.RLock()
-	defer dl.lock.RUnlock()
-
-	accounts := make(map[common.Hash]*types.SlimAccount, len(dl.accountData))
-	for hash, data := range dl.accountData {
-		account := new(types.SlimAccount)
-		if err := rlp.DecodeBytes(data, account); err != nil {
-			return nil, err
-		}
-		accounts[hash] = account
-	}
-
-	return accounts, nil
 }
 
 // AccountRLP directly retrieves the account RLP associated with a particular
@@ -465,7 +408,7 @@ func (dl *diffLayer) storage(accountHash, storageHash common.Hash, depth int) ([
 	if storage, ok := dl.storageData[accountHash]; ok {
 		if data, ok := storage[storageHash]; ok {
 			snapshotDirtyStorageHitMeter.Mark(1)
-			//snapshotDirtyStorageHitDepthHist.Update(int64(depth))
+			snapshotDirtyStorageHitDepthHist.Update(int64(depth))
 			if n := len(data); n > 0 {
 				snapshotDirtyStorageReadMeter.Mark(int64(n))
 			} else {
@@ -478,7 +421,7 @@ func (dl *diffLayer) storage(accountHash, storageHash common.Hash, depth int) ([
 	// If the account is known locally, but deleted, return an empty slot
 	if _, ok := dl.destructSet[accountHash]; ok {
 		snapshotDirtyStorageHitMeter.Mark(1)
-		//snapshotDirtyStorageHitDepthHist.Update(int64(depth))
+		snapshotDirtyStorageHitDepthHist.Update(int64(depth))
 		snapshotDirtyStorageInexMeter.Mark(1)
 		snapshotBloomStorageTrueHitMeter.Mark(1)
 		return nil, nil
@@ -494,8 +437,8 @@ func (dl *diffLayer) storage(accountHash, storageHash common.Hash, depth int) ([
 
 // Update creates a new layer on top of the existing snapshot diff tree with
 // the specified data items.
-func (dl *diffLayer) Update(blockRoot common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storage map[common.Hash]map[common.Hash][]byte, verified chan struct{}) *diffLayer {
-	return newDiffLayer(dl, blockRoot, destructs, accounts, storage, verified)
+func (dl *diffLayer) Update(blockRoot common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storage map[common.Hash]map[common.Hash][]byte) *diffLayer {
+	return newDiffLayer(dl, blockRoot, destructs, accounts, storage)
 }
 
 // flatten pushes all data from this point downwards, flattening everything into

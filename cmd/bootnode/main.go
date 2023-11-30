@@ -32,32 +32,31 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/nat"
 	"github.com/ethereum/go-ethereum/p2p/netutil"
+	"golang.org/x/exp/slog"
 )
 
 func main() {
 	var (
-		listenAddr    = flag.String("addr", ":30301", "listen address")
-		genKey        = flag.String("genkey", "", "generate a node key")
-		writeAddr     = flag.Bool("writeaddress", false, "write out the node's public key and quit")
-		nodeKeyFile   = flag.String("nodekey", "", "private key filename")
-		nodeKeyHex    = flag.String("nodekeyhex", "", "private key as hex (for testing)")
-		natdesc       = flag.String("nat", "none", "port mapping mechanism (any|none|upnp|pmp|pmp:<IP>|extip:<IP>)")
-		netrestrict   = flag.String("netrestrict", "", "restrict network communication to the given IP networks (CIDR masks)")
-		runv5         = flag.Bool("v5", false, "run a v5 topic discovery bootnode")
-		verbosity     = flag.Int("verbosity", int(log.LvlInfo), "log verbosity (0-5)")
-		vmodule       = flag.String("vmodule", "", "log verbosity pattern")
-		networkFilter = flag.String("network", "", "<bsc/chapel/rialto> filters nodes by eth ENR entry")
+		listenAddr  = flag.String("addr", ":30301", "listen address")
+		genKey      = flag.String("genkey", "", "generate a node key")
+		writeAddr   = flag.Bool("writeaddress", false, "write out the node's public key and quit")
+		nodeKeyFile = flag.String("nodekey", "", "private key filename")
+		nodeKeyHex  = flag.String("nodekeyhex", "", "private key as hex (for testing)")
+		natdesc     = flag.String("nat", "none", "port mapping mechanism (any|none|upnp|pmp|pmp:<IP>|extip:<IP>)")
+		netrestrict = flag.String("netrestrict", "", "restrict network communication to the given IP networks (CIDR masks)")
+		runv5       = flag.Bool("v5", false, "run a v5 topic discovery bootnode")
+		verbosity   = flag.Int("verbosity", int(log.LvlInfo), "log verbosity (0-5)")
+		vmodule     = flag.String("vmodule", "", "log verbosity pattern")
 
-		nodeKey        *ecdsa.PrivateKey
-		filterFunction discover.NodeFilterFunc
-		err            error
+		nodeKey *ecdsa.PrivateKey
+		err     error
 	)
 	flag.Parse()
 
-	glogger := log.NewGlogHandler(log.StreamHandler(os.Stderr, log.TerminalFormat(false)))
-	glogger.Verbosity(log.Lvl(*verbosity))
+	glogger := log.NewGlogHandler(log.NewTerminalHandler(os.Stderr, false))
+	glogger.Verbosity(slog.Level(*verbosity))
 	glogger.Vmodule(*vmodule)
-	log.Root().SetHandler(glogger)
+	log.SetDefault(log.NewLogger(glogger))
 
 	natm, err := nat.Parse(*natdesc)
 	if err != nil {
@@ -86,12 +85,6 @@ func main() {
 	case *nodeKeyHex != "":
 		if nodeKey, err = crypto.HexToECDSA(*nodeKeyHex); err != nil {
 			utils.Fatalf("-nodekeyhex: %v", err)
-		}
-	}
-
-	if *networkFilter != "" {
-		if filterFunction, err = discover.ParseEthFilter(*networkFilter); err != nil {
-			utils.Fatalf("-network: %v", err)
 		}
 	}
 
@@ -131,10 +124,8 @@ func main() {
 
 	printNotice(&nodeKey.PublicKey, *listenerAddr)
 	cfg := discover.Config{
-		PrivateKey:     nodeKey,
-		NetRestrict:    restrictList,
-		FilterFunction: filterFunction,
-		IsBootnode:     true,
+		PrivateKey:  nodeKey,
+		NetRestrict: restrictList,
 	}
 	if *runv5 {
 		if _, err := discover.ListenV5(conn, ln, cfg); err != nil {

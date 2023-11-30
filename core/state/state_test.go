@@ -58,9 +58,7 @@ func TestDump(t *testing.T) {
 	// write some of them to the trie
 	s.state.updateStateObject(obj1)
 	s.state.updateStateObject(obj2)
-	s.state.Finalise(false)
-	s.state.AccountsIntermediateRoot()
-	root, _, _ := s.state.Commit(0, nil)
+	root, _ := s.state.Commit(0, false)
 
 	// check that DumpToCollector contains the state objects that are in trie
 	s.state, _ = New(root, tdb, nil)
@@ -73,6 +71,7 @@ func TestDump(t *testing.T) {
             "nonce": 0,
             "root": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
             "codeHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+            "address": "0x0000000000000000000000000000000000000001",
             "key": "0x1468288056310c82aa4c01a7e12a10f8111a0560e72b700555479031b86c357d"
         },
         "0x0000000000000000000000000000000000000002": {
@@ -80,6 +79,7 @@ func TestDump(t *testing.T) {
             "nonce": 0,
             "root": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
             "codeHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+            "address": "0x0000000000000000000000000000000000000002",
             "key": "0xd52688a8f926c816ca1e079067caba944f158e764817b83fc43594370ca9cf62"
         },
         "0x0000000000000000000000000000000000000102": {
@@ -88,6 +88,7 @@ func TestDump(t *testing.T) {
             "root": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
             "codeHash": "0x87874902497a5bb968da31a2998d8f22e949d1ef6214bcdedd8bae24cca4b9e3",
             "code": "0x03030303030303",
+            "address": "0x0000000000000000000000000000000000000102",
             "key": "0xa17eacbc25cda025e81db9c5c62868822c73ce097cee2a63e33a2e41268358a1"
         }
     }
@@ -116,9 +117,7 @@ func TestIterativeDump(t *testing.T) {
 	// write some of them to the trie
 	s.state.updateStateObject(obj1)
 	s.state.updateStateObject(obj2)
-	s.state.Finalise(false)
-	s.state.AccountsIntermediateRoot()
-	root, _, _ := s.state.Commit(0, nil)
+	root, _ := s.state.Commit(0, false)
 	s.state, _ = New(root, tdb, nil)
 
 	b := &bytes.Buffer{}
@@ -144,9 +143,7 @@ func TestNull(t *testing.T) {
 	var value common.Hash
 
 	s.state.SetState(address, common.Hash{}, value)
-	s.state.Finalise(false)
-	s.state.AccountsIntermediateRoot()
-	s.state.Commit(0, nil)
+	s.state.Commit(0, false)
 
 	if value := s.state.GetState(address, common.Hash{}); value != (common.Hash{}) {
 		t.Errorf("expected empty current value, got %x", value)
@@ -218,9 +215,7 @@ func TestSnapshot2(t *testing.T) {
 	so0.deleted = false
 	state.setStateObject(so0)
 
-	state.Finalise(false)
-	state.AccountsIntermediateRoot()
-	root, _, _ := state.Commit(0, nil)
+	root, _ := state.Commit(0, false)
 	state, _ = New(root, state.db, state.snaps)
 
 	// and one with deleted == true

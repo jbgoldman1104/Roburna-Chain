@@ -1,4 +1,4 @@
-// Copyright 2022 The go-ethereum Authors
+// Copyright 2021 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -195,7 +195,7 @@ func TestHaltBetweenSteps(t *testing.T) {
 	}
 }
 
-// TestNoStepExec tests a regular value transfer (no exec), and accessing the statedb
+// testNoStepExec tests a regular value transfer (no exec), and accessing the statedb
 // in 'result'
 func TestNoStepExec(t *testing.T) {
 	execTracer := func(code string) []byte {

@@ -261,8 +261,6 @@ func (b *backendMock) SyncProgress() ethereum.SyncProgress { return ethereum.Syn
 func (b *backendMock) FeeHistory(ctx context.Context, blockCount uint64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
 	return nil, nil, nil, nil, nil
 }
-
-func (b *backendMock) Chain() *core.BlockChain           { return nil }
 func (b *backendMock) ChainDb() ethdb.Database           { return nil }
 func (b *backendMock) AccountManager() *accounts.Manager { return nil }
 func (b *backendMock) ExtRPCEnabled() bool               { return false }
@@ -307,20 +305,14 @@ func (b *backendMock) GetLogs(ctx context.Context, blockHash common.Hash, number
 	return nil, nil
 }
 func (b *backendMock) GetTd(ctx context.Context, hash common.Hash) *big.Int { return nil }
-func (b *backendMock) GetEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) (*vm.EVM, func() error) {
-	return nil, nil
+func (b *backendMock) GetEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) *vm.EVM {
+	return nil
 }
 func (b *backendMock) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription { return nil }
 func (b *backendMock) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
 	return nil
 }
 func (b *backendMock) SubscribeChainSideEvent(ch chan<- core.ChainSideEvent) event.Subscription {
-	return nil
-}
-func (b *backendMock) SubscribeFinalizedHeaderEvent(ch chan<- core.FinalizedHeaderEvent) event.Subscription {
-	return nil
-}
-func (b *backendMock) SubscribeNewVoteEvent(ch chan<- core.NewVoteEvent) event.Subscription {
 	return nil
 }
 func (b *backendMock) SendTx(ctx context.Context, signedTx *types.Transaction) error { return nil }

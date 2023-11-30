@@ -17,6 +17,7 @@
 package eth
 
 import (
+	"errors"
 	"math/big"
 	"time"
 
@@ -44,15 +45,6 @@ func (h *handler) syncTransactions(p *eth.Peer) {
 		return
 	}
 	p.AsyncSendPooledTransactionHashes(hashes)
-}
-
-// syncVotes starts sending all currently pending votes to the given peer.
-func (h *handler) syncVotes(p *bscPeer) {
-	votes := h.votepool.GetVotes()
-	if len(votes) == 0 {
-		return
-	}
-	p.AsyncSendVotes(votes)
 }
 
 // chainSyncer coordinates blockchain sync components.
@@ -115,10 +107,18 @@ func (cs *chainSyncer) loop() {
 		select {
 		case <-cs.peerEventCh:
 			// Peer information changed, recheck.
-		case <-cs.doneCh:
+		case err := <-cs.doneCh:
 			cs.doneCh = nil
 			cs.force.Reset(forceSyncCycle)
 			cs.forced = false
+
+			// If we've reached the merge transition but no beacon client is available, or
+			// it has not yet switched us over, keep warning the user that their infra is
+			// potentially flaky.
+			if errors.Is(err, downloader.ErrMergeTransition) && time.Since(cs.warned) > 10*time.Second {
+				log.Warn("Local chain is post-merge, waiting for beacon client sync switch-over...")
+				cs.warned = time.Now()
+			}
 		case <-cs.force.C:
 			cs.forced = true
 
@@ -131,8 +131,6 @@ func (cs *chainSyncer) loop() {
 			if cs.doneCh != nil {
 				<-cs.doneCh
 			}
-			return
-		case <-cs.handler.stopCh:
 			return
 		}
 	}
@@ -199,20 +197,25 @@ func (cs *chainSyncer) modeAndLocalHead() (downloader.SyncMode, *big.Int) {
 		return downloader.SnapSync, td
 	}
 	// We are probably in full sync, but we might have rewound to before the
-	// snap sync pivot, check if we should reenable
+	// snap sync pivot, check if we should re-enable snap sync.
+	head := cs.handler.chain.CurrentBlock()
 	if pivot := rawdb.ReadLastPivotNumber(cs.handler.database); pivot != nil {
-		if head := cs.handler.chain.CurrentBlock(); head.Number.Uint64() < *pivot {
-			if rawdb.ReadAncientType(cs.handler.database) == rawdb.PruneFreezerType {
-				log.Crit("Current rewound to before the fast sync pivot, can't enable pruneancient mode", "current block number", head.Number.Uint64(), "pivot", *pivot)
-			}
+		if head.Number.Uint64() < *pivot {
 			block := cs.handler.chain.CurrentSnapBlock()
 			td := cs.handler.chain.GetTd(block.Hash(), block.Number.Uint64())
 			return downloader.SnapSync, td
 		}
 	}
-
+	// We are in a full sync, but the associated head state is missing. To complete
+	// the head state, forcefully rerun the snap sync. Note it doesn't mean the
+	// persistent state is corrupted, just mismatch with the head block.
+	if !cs.handler.chain.HasState(head.Root) {
+		block := cs.handler.chain.CurrentSnapBlock()
+		td := cs.handler.chain.GetTd(block.Hash(), block.Number.Uint64())
+		log.Info("Reenabled snap sync as chain is stateless")
+		return downloader.SnapSync, td
+	}
 	// Nope, we're really full syncing
-	head := cs.handler.chain.CurrentBlock()
 	td := cs.handler.chain.GetTd(head.Hash(), head.Number.Uint64())
 	return downloader.FullSync, td
 }
@@ -248,13 +251,7 @@ func (h *handler) doSync(op *chainSyncOp) error {
 	if err != nil {
 		return err
 	}
-	if h.snapSync.Load() {
-		log.Info("Snap sync complete, auto disabling")
-		h.snapSync.Store(false)
-	}
-	// If we've successfully finished a sync cycle, enable accepting transactions
-	// from the network.
-	h.acceptTxs.Store(true)
+	h.enableSyncedFeatures()
 
 	head := h.chain.CurrentBlock()
 	if head.Number.Uint64() > 0 {

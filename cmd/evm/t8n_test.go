@@ -24,9 +24,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/pkg/reexec"
 	"github.com/ethereum/go-ethereum/cmd/evm/internal/t8ntool"
 	"github.com/ethereum/go-ethereum/internal/cmdtest"
+	"github.com/ethereum/go-ethereum/internal/reexec"
 )
 
 func TestMain(m *testing.M) {
@@ -106,6 +106,7 @@ func (args *t8nOutput) get() (out []string) {
 }
 
 func TestT8n(t *testing.T) {
+	t.Parallel()
 	tt := new(testT8n)
 	tt.TestCmd = cmdtest.NewTestCmd(t, tt)
 	for i, tc := range []struct {
@@ -243,17 +244,14 @@ func TestT8n(t *testing.T) {
 			output:      t8nOutput{alloc: false, result: false},
 			expExitCode: 3,
 		},
-		// base fee logic is different with go-ethereum
-		/*
-			{ // Test base fee calculation
-				base: "./testdata/25",
-				input: t8nInput{
-					"alloc.json", "txs.json", "env.json", "Merge", "",
-				},
-				output: t8nOutput{alloc: true, result: true},
-				expOut: "exp.json",
+		{ // Test base fee calculation
+			base: "./testdata/25",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Merge", "",
 			},
-		*/
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp.json",
+		},
 		{ // Test withdrawals transition
 			base: "./testdata/26",
 			input: t8nInput{
@@ -262,17 +260,30 @@ func TestT8n(t *testing.T) {
 			output: t8nOutput{alloc: true, result: true},
 			expOut: "exp.json",
 		},
-		// TODO(Nathan): Cancun not ready
-		/*
-			{ // Cancun tests
-				base: "./testdata/28",
-				input: t8nInput{
-					"alloc.json", "txs.rlp", "env.json", "Cancun", "",
-				},
-				output: t8nOutput{alloc: true, result: true},
-				expOut: "exp.json",
+		{ // Cancun tests
+			base: "./testdata/28",
+			input: t8nInput{
+				"alloc.json", "txs.rlp", "env.json", "Cancun", "",
 			},
-		*/
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp.json",
+		},
+		{ // More cancun tests
+			base: "./testdata/29",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Cancun", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp.json",
+		},
+		{ // More cancun test, plus example of rlp-transaction that cannot be decoded properly
+			base: "./testdata/30",
+			input: t8nInput{
+				"alloc.json", "txs_more.rlp", "env.json", "Cancun", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp.json",
+		},
 	} {
 		args := []string{"t8n"}
 		args = append(args, tc.output.get()...)
@@ -328,6 +339,7 @@ func (args *t9nInput) get(base string) []string {
 }
 
 func TestT9n(t *testing.T) {
+	t.Parallel()
 	tt := new(testT8n)
 	tt.TestCmd = cmdtest.NewTestCmd(t, tt)
 	for i, tc := range []struct {
@@ -463,6 +475,7 @@ func (args *b11rInput) get(base string) []string {
 }
 
 func TestB11r(t *testing.T) {
+	t.Parallel()
 	tt := new(testT8n)
 	tt.TestCmd = cmdtest.NewTestCmd(t, tt)
 	for i, tc := range []struct {

@@ -266,8 +266,21 @@ func (ethash *Ethash) verifyHeader(chain consensus.ChainHeaderReader, header, pa
 	if chain.Config().IsShanghai(header.Number, header.Time) {
 		return errors.New("ethash does not support shanghai fork")
 	}
+	// Verify the non-existence of withdrawalsHash.
+	if header.WithdrawalsHash != nil {
+		return fmt.Errorf("invalid withdrawalsHash: have %x, expected nil", header.WithdrawalsHash)
+	}
 	if chain.Config().IsCancun(header.Number, header.Time) {
 		return errors.New("ethash does not support cancun fork")
+	}
+	// Verify the non-existence of cancun-specific header fields
+	switch {
+	case header.ExcessBlobGas != nil:
+		return fmt.Errorf("invalid excessBlobGas: have %d, expected nil", header.ExcessBlobGas)
+	case header.BlobGasUsed != nil:
+		return fmt.Errorf("invalid blobGasUsed: have %d, expected nil", header.BlobGasUsed)
+	case header.ParentBeaconRoot != nil:
+		return fmt.Errorf("invalid parentBeaconRoot, have %#x, expected nil", header.ParentBeaconRoot)
 	}
 	// Add some fake checks for tests
 	if ethash.fakeDelay != nil {
@@ -486,33 +499,26 @@ func (ethash *Ethash) Prepare(chain consensus.ChainHeaderReader, header *types.H
 	return nil
 }
 
-// Finalize implements consensus.Engine, accumulating the block and uncle rewards,
-// setting the final state on the header
-func (ethash *Ethash) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, _ *[]*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal,
-	_ *[]*types.Receipt, _ *[]*types.Transaction, _ *uint64) (err error) {
-	// Accumulate any block and uncle rewards and commit the final state root
+// Finalize implements consensus.Engine, accumulating the block and uncle rewards.
+func (ethash *Ethash) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal) {
+	// Accumulate any block and uncle rewards
 	accumulateRewards(chain.Config(), state, header, uncles)
-	return
 }
 
 // FinalizeAndAssemble implements consensus.Engine, accumulating the block and
 // uncle rewards, setting the final state and assembling the block.
-func (ethash *Ethash) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt, withdrawals []*types.Withdrawal) (*types.Block, []*types.Receipt, error) {
+func (ethash *Ethash) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt, withdrawals []*types.Withdrawal) (*types.Block, error) {
 	if len(withdrawals) > 0 {
-		return nil, nil, errors.New("ethash does not support withdrawals")
+		return nil, errors.New("ethash does not support withdrawals")
 	}
 	// Finalize block
-	ethash.Finalize(chain, header, state, &txs, uncles, nil, nil, nil, nil)
+	ethash.Finalize(chain, header, state, txs, uncles, nil)
 
 	// Assign the final state root to header.
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 
 	// Header seems complete, assemble into a block and return
-	return types.NewBlock(header, txs, uncles, receipts, trie.NewStackTrie(nil)), receipts, nil
-}
-
-func (ethash *Ethash) Delay(_ consensus.ChainReader, _ *types.Header, _ *time.Duration) *time.Duration {
-	return nil
+	return types.NewBlock(header, txs, uncles, receipts, trie.NewStackTrie(nil)), nil
 }
 
 // SealHash returns the hash of a block prior to it being sealed.
@@ -539,6 +545,15 @@ func (ethash *Ethash) SealHash(header *types.Header) (hash common.Hash) {
 	}
 	if header.WithdrawalsHash != nil {
 		panic("withdrawal hash set on ethash")
+	}
+	if header.ExcessBlobGas != nil {
+		panic("excess blob gas set on ethash")
+	}
+	if header.BlobGasUsed != nil {
+		panic("blob gas used set on ethash")
+	}
+	if header.ParentBeaconRoot != nil {
+		panic("parent beacon root set on ethash")
 	}
 	rlp.Encode(hasher, enc)
 	hasher.Sum(hash[:0])

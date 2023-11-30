@@ -68,10 +68,6 @@ func (db *Database) AncientRange(kind string, start, count, maxBytes uint64) ([]
 	panic("not supported")
 }
 
-func (db *Database) ItemAmountInAncient() (uint64, error) {
-	panic("not supported")
-}
-
 func (db *Database) Ancients() (uint64, error) {
 	var resp uint64
 	err := db.remote.Call(&resp, "debug_dbAncients")
@@ -86,20 +82,8 @@ func (db *Database) AncientSize(kind string) (uint64, error) {
 	panic("not supported")
 }
 
-func (db *Database) DiffStore() ethdb.KeyValueStore {
-	panic("not supported")
-}
-
-func (db *Database) SetDiffStore(diff ethdb.KeyValueStore) {
-	panic("not supported")
-}
-
 func (db *Database) ReadAncients(fn func(op ethdb.AncientReaderOp) error) (err error) {
 	return fn(db)
-}
-
-func (db *Database) AncientOffSet() uint64 {
-	panic("not supported")
 }
 
 func (db *Database) Put(key []byte, value []byte) error {

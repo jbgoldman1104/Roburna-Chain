@@ -14,10 +14,7 @@
 */**/*tx_database*
 */**/*dapps*
 build/_vendor/pkg
-/tests/truffle/storage
-data/*/node
-data/*/clef
-password.txt
+
 #*
 .#*
 *#
@@ -50,8 +47,6 @@ profile.cov
 /dashboard/assets/package-lock.json
 
 **/yarn-error.log
-cmd/geth/node/
-cmd/geth/__debug_bin
-cmd/bootnode/bootnode
-graphql/__debug_bin
 logs/
+
+tests/spec-tests/

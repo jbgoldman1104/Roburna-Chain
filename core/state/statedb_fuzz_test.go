@@ -181,7 +181,7 @@ func (test *stateTest) run() bool {
 			storageList = append(storageList, copy2DSet(states.Storages))
 		}
 		disk      = rawdb.NewMemoryDatabase()
-		tdb       = trie.NewDatabase(disk, &trie.Config{OnCommit: onCommit, PathDB: pathdb.Defaults})
+		tdb       = trie.NewDatabase(disk, &trie.Config{PathDB: pathdb.Defaults})
 		sdb       = NewDatabaseWithNodeDB(disk, tdb)
 		byzantium = rand.Intn(2) == 0
 	)
@@ -195,7 +195,7 @@ func (test *stateTest) run() bool {
 			Recovery:   false,
 			NoBuild:    false,
 			AsyncBuild: false,
-		}, disk, tdb, types.EmptyRootHash, 128, false)
+		}, disk, tdb, types.EmptyRootHash)
 	}
 	for i, actions := range test.actions {
 		root := types.EmptyRootHash
@@ -206,6 +206,8 @@ func (test *stateTest) run() bool {
 		if err != nil {
 			panic(err)
 		}
+		state.onCommit = onCommit
+
 		for i, action := range actions {
 			if i%test.chunk == 0 && i != 0 {
 				if byzantium {
@@ -218,11 +220,10 @@ func (test *stateTest) run() bool {
 		}
 		if byzantium {
 			state.Finalise(true) // call finalise at the transaction boundary
-			state.AccountsIntermediateRoot()
 		} else {
 			state.IntermediateRoot(true) // call intermediateRoot at the transaction boundary
 		}
-		nroot, _, err := state.Commit(0, nil) // call commit at the block boundary
+		nroot, err := state.Commit(0, true) // call commit at the block boundary
 		if err != nil {
 			panic(err)
 		}

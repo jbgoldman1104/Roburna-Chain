@@ -30,7 +30,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/internal/utesting"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/rlpx"
 )
@@ -63,7 +62,6 @@ func (s *Suite) dial() (*Conn, error) {
 	}
 	// set default p2p capabilities
 	conn.caps = []p2p.Cap{
-		{Name: "eth", Version: 66},
 		{Name: "eth", Version: 67},
 		{Name: "eth", Version: 68},
 	}
@@ -203,29 +201,6 @@ loop:
 	if err := c.Write(status); err != nil {
 		return nil, fmt.Errorf("write to connection failed: %v", err)
 	}
-
-	// exchange UpgradeStatus
-	if c.negotiatedProtoVersion >= eth.ETH67 {
-		extensionRaw, _ := (&eth.UpgradeStatusExtension{}).Encode()
-		upgradeStatus := UpgradeStatus{
-			Extension: extensionRaw,
-		}
-		if err := c.Write(upgradeStatus); err != nil {
-			return nil, fmt.Errorf("write to connection failed: %v", err)
-		}
-		switch msg := c.Read().(type) {
-		case *UpgradeStatus:
-			log.Debug("receive UpgradeStatus")
-		case *Disconnect:
-			return nil, fmt.Errorf("disconnect received: %v", msg.Reason)
-		case *Ping:
-			c.Write(&Pong{}) // TODO (renaynay): in the future, this should be an error
-			// (PINGs should not be a response upon fresh connection)
-		default:
-			return nil, fmt.Errorf("bad status message: %s", pretty.Sdump(msg))
-		}
-	}
-
 	return message, nil
 }
 
@@ -261,8 +236,8 @@ func (c *Conn) readAndServe(chain *Chain, timeout time.Duration) Message {
 				return errorf("could not get headers for inbound header request: %v", err)
 			}
 			resp := &BlockHeaders{
-				RequestId:          msg.ReqID(),
-				BlockHeadersPacket: eth.BlockHeadersPacket(headers),
+				RequestId:           msg.ReqID(),
+				BlockHeadersRequest: eth.BlockHeadersRequest(headers),
 			}
 			if err := c.Write(resp); err != nil {
 				return errorf("could not write to connection: %v", err)
@@ -291,7 +266,7 @@ func (c *Conn) headersRequest(request *GetBlockHeaders, chain *Chain, reqID uint
 	if !ok {
 		return nil, fmt.Errorf("unexpected message received: %s", pretty.Sdump(msg))
 	}
-	headers := []*types.Header(resp.BlockHeadersPacket)
+	headers := []*types.Header(resp.BlockHeadersRequest)
 	return headers, nil
 }
 
@@ -403,7 +378,7 @@ func (s *Suite) waitForBlockImport(conn *Conn, block *types.Block) error {
 	conn.SetReadDeadline(time.Now().Add(20 * time.Second))
 	// create request
 	req := &GetBlockHeaders{
-		GetBlockHeadersPacket: &eth.GetBlockHeadersPacket{
+		GetBlockHeadersRequest: &eth.GetBlockHeadersRequest{
 			Origin: eth.HashOrNumber{Hash: block.Hash()},
 			Amount: 1,
 		},
@@ -628,8 +603,8 @@ func (s *Suite) hashAnnounce() error {
 			pretty.Sdump(blockHeaderReq))
 	}
 	err = sendConn.Write(&BlockHeaders{
-		RequestId:          blockHeaderReq.ReqID(),
-		BlockHeadersPacket: eth.BlockHeadersPacket{nextBlock.Header()},
+		RequestId:           blockHeaderReq.ReqID(),
+		BlockHeadersRequest: eth.BlockHeadersRequest{nextBlock.Header()},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to write to connection: %v", err)

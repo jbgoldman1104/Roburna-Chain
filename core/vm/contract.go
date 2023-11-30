@@ -19,20 +19,8 @@ package vm
 import (
 	"math/big"
 
-	lru "github.com/hashicorp/golang-lru"
-
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/holiman/uint256"
-)
-
-const codeBitmapCacheSize = 2000
-
-var (
-	codeBitmapCache, _ = lru.New(codeBitmapCacheSize)
-
-	contractCodeBitmapHitMeter  = metrics.NewRegisteredMeter("vm/contract/code/bitmap/hit", nil)
-	contractCodeBitmapMissMeter = metrics.NewRegisteredMeter("vm/contract/code/bitmap/miss", nil)
 )
 
 // ContractRef is a reference to the contract's backing object
@@ -43,13 +31,13 @@ type ContractRef interface {
 // AccountRef implements ContractRef.
 //
 // Account references are used during EVM initialisation and
-// it's primary use is to fetch addresses. Removing this object
+// its primary use is to fetch addresses. Removing this object
 // proves difficult because of the cached jump destinations which
 // are fetched from the parent contract (i.e. the caller), which
 // is a ContractRef.
 type AccountRef common.Address
 
-// Address casts AccountRef to a Address
+// Address casts AccountRef to an Address
 func (ar AccountRef) Address() common.Address { return (common.Address)(ar) }
 
 // Contract represents an ethereum contract in the state database. It contains
@@ -122,17 +110,10 @@ func (c *Contract) isCode(udest uint64) bool {
 		// Does parent context have the analysis?
 		analysis, exist := c.jumpdests[c.CodeHash]
 		if !exist {
-			if cached, ok := codeBitmapCache.Get(c.CodeHash); ok {
-				contractCodeBitmapHitMeter.Mark(1)
-				analysis = cached.(bitvec)
-			} else {
-				// Do the analysis and save in parent context
-				// We do not need to store it in c.analysis
-				analysis = codeBitmap(c.Code)
-				c.jumpdests[c.CodeHash] = analysis
-				contractCodeBitmapMissMeter.Mark(1)
-				codeBitmapCache.Add(c.CodeHash, analysis)
-			}
+			// Do the analysis and save in parent context
+			// We do not need to store it in c.analysis
+			analysis = codeBitmap(c.Code)
+			c.jumpdests[c.CodeHash] = analysis
 		}
 		// Also stash it in current contract for faster access
 		c.analysis = analysis

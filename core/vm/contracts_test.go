@@ -46,17 +46,18 @@ type precompiledFailureTest struct {
 // allPrecompiles does not map to the actual set of precompiles, as it also contains
 // repriced versions of precompiles at certain slots
 var allPrecompiles = map[common.Address]PrecompiledContract{
-	common.BytesToAddress([]byte{1}):          &ecrecover{},
-	common.BytesToAddress([]byte{2}):          &sha256hash{},
-	common.BytesToAddress([]byte{3}):          &ripemd160hash{},
-	common.BytesToAddress([]byte{4}):          &dataCopy{},
-	common.BytesToAddress([]byte{5}):          &bigModExp{eip2565: false},
-	common.BytesToAddress([]byte{0xf5}):       &bigModExp{eip2565: true},
-	common.BytesToAddress([]byte{6}):          &bn256AddIstanbul{},
-	common.BytesToAddress([]byte{7}):          &bn256ScalarMulIstanbul{},
-	common.BytesToAddress([]byte{8}):          &bn256PairingIstanbul{},
-	common.BytesToAddress([]byte{9}):          &blake2F{},
-	common.BytesToAddress([]byte{0x0a}):       &kzgPointEvaluation{},
+	common.BytesToAddress([]byte{1}):    &ecrecover{},
+	common.BytesToAddress([]byte{2}):    &sha256hash{},
+	common.BytesToAddress([]byte{3}):    &ripemd160hash{},
+	common.BytesToAddress([]byte{4}):    &dataCopy{},
+	common.BytesToAddress([]byte{5}):    &bigModExp{eip2565: false},
+	common.BytesToAddress([]byte{0xf5}): &bigModExp{eip2565: true},
+	common.BytesToAddress([]byte{6}):    &bn256AddIstanbul{},
+	common.BytesToAddress([]byte{7}):    &bn256ScalarMulIstanbul{},
+	common.BytesToAddress([]byte{8}):    &bn256PairingIstanbul{},
+	common.BytesToAddress([]byte{9}):    &blake2F{},
+	common.BytesToAddress([]byte{0x0a}): &kzgPointEvaluation{},
+
 	common.BytesToAddress([]byte{0x0f, 0x0a}): &bls12381G1Add{},
 	common.BytesToAddress([]byte{0x0f, 0x0b}): &bls12381G1Mul{},
 	common.BytesToAddress([]byte{0x0f, 0x0c}): &bls12381G1MultiExp{},
@@ -66,7 +67,6 @@ var allPrecompiles = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x0f, 0x10}): &bls12381Pairing{},
 	common.BytesToAddress([]byte{0x0f, 0x11}): &bls12381MapG1{},
 	common.BytesToAddress([]byte{0x0f, 0x12}): &bls12381MapG2{},
-	common.BytesToAddress([]byte{102}):        &blsSignatureVerify{},
 }
 
 // EIP-152 test vectors
@@ -181,7 +181,7 @@ func benchmarkPrecompiled(addr string, test precompiledTest, bench *testing.B) {
 		// Keep it as uint64, multiply 100 to get two digit float later
 		mgasps := (100 * 1000 * gasUsed) / elapsed
 		bench.ReportMetric(float64(mgasps)/100, "mgas/s")
-		// Check if it is correct
+		//Check if it is correct
 		if err != nil {
 			bench.Error(err)
 			return
@@ -231,16 +231,6 @@ func BenchmarkPrecompiledIdentity(bench *testing.B) {
 		Name:     "128",
 	}
 	benchmarkPrecompiled("04", t, bench)
-}
-
-// Benchmarks the sample inputs from the blsSignatureVerify precompile.
-func BenchmarkPrecompiledBlsSignatureVerify(bench *testing.B) {
-	t := precompiledTest{
-		Input:    "f2d8e8e5bf354429e3ce8b97c4e88f7a0bf7bc917e856de762ed6d70dd8ec2d289a04d63285e4b45309e7c180ea82565e375dd62c7b80d957aea4c9b7e16bdb28a0f910036bd3220fe3d7614fb137a8f0a68b3c564ddd214b5041d8f7a124e6e7285ac42635e75eeb9051a052fb500b1c2bc23bd4290db59fc02be11f2b80896b6e22d5b8dd31ba2e49b13cd6be19fcd01c1e23af3e5165d88d8b9deaf38baa77770fa6a358e2eebdffd1bd8a1eb7386",
-		Expected: "01",
-		Name:     "",
-	}
-	benchmarkPrecompiled("66", t, bench)
 }
 
 // Tests the sample inputs from the ModExp EIP 198.

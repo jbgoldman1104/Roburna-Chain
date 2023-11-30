@@ -27,7 +27,6 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/enr"
 	"golang.org/x/exp/slices"
@@ -42,7 +41,7 @@ func init() {
 }
 
 func newTestTable(t transport) (*Table, *enode.DB) {
-	cfg := Config{Log: log.Root()}
+	cfg := Config{}
 	db, _ := enode.OpenDB("")
 	tab, _ := newTable(t, db, cfg)
 	go tab.loop()
@@ -112,7 +111,7 @@ func fillBucket(tab *Table, n *node) (last *node) {
 // if the bucket is not full. The caller must not hold tab.mutex.
 func fillTable(tab *Table, nodes []*node) {
 	for _, n := range nodes {
-		tab.addSeenNodeSync(n)
+		tab.addSeenNode(n)
 	}
 }
 

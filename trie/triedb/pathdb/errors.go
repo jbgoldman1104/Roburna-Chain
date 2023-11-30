@@ -25,9 +25,13 @@ import (
 )
 
 var (
-	// errSnapshotReadOnly is returned if the database is opened in read only mode
-	// and mutation is requested.
-	errSnapshotReadOnly = errors.New("read only")
+	// errDatabaseReadOnly is returned if the database is opened in read only mode
+	// to prevent any mutation.
+	errDatabaseReadOnly = errors.New("read only")
+
+	// errDatabaseWaitSync is returned if the initial state sync is not completed
+	// yet and database is disabled to prevent accessing state.
+	errDatabaseWaitSync = errors.New("waiting for sync")
 
 	// errSnapshotStale is returned from data accessors if the underlying layer
 	// layer had been invalidated due to the chain progressing forward far enough
@@ -45,20 +49,6 @@ var (
 	// errUnexpectedNode is returned if the requested node with specified path is
 	// not hash matched with expectation.
 	errUnexpectedNode = errors.New("unexpected node")
-
-	// errWriteImmutable is returned if write to background immutable nodecache
-	// under asyncnodebuffer
-	errWriteImmutable = errors.New("write immutable nodecache")
-
-	// errFlushMutable is returned if flush the background mutable nodecache
-	// to disk, under asyncnodebuffer
-	errFlushMutable = errors.New("flush mutable nodecache")
-
-	// errIncompatibleMerge is returned when merge node cache occurs error.
-	errIncompatibleMerge = errors.New("incompatible nodecache merge")
-
-	// errRevertImmutable is returned if revert the background immutable nodecache
-	errRevertImmutable = errors.New("revert immutable nodecache")
 )
 
 func newUnexpectedNodeError(loc string, expHash common.Hash, gotHash common.Hash, owner common.Hash, path []byte, blob []byte) error {
