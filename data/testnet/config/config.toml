@@ -24,7 +24,6 @@ GlobalQueue = 4000
 [Eth.GPO]
 Blocks = 20
 Percentile = 60
-OracleThreshold = 1000
 
 [Node]
 IPCPath = "geth.ipc"
@@ -44,9 +43,4 @@ StaticNodes = []
 ListenAddr = ":30311"
 EnableMsgEvents = false
 
-[Node.LogConfig]
-FilePath = "bsc.log"
-MaxBytesSize = 10485760
-Level = "info"
-FileRoot = ""
 
