@@ -344,6 +344,9 @@ func (p *Parlia) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*typ
 // Before luban fork: |---Extra Vanity---|---Validators Bytes (or Empty)---|---Extra Seal---|
 // After luban fork:  |---Extra Vanity---|---Validators Number and Validators Bytes (or Empty)---|---Vote Attestation (or Empty)---|---Extra Seal---|
 func getValidatorBytesFromHeader(header *types.Header, chainConfig *params.ChainConfig, parliaConfig *params.ParliaConfig) []byte {
+
+	log.Warn("getValidatorBytesFromHeader", "error", fmt.Errorf("header extralen=%d", len(header.Extra)))
+
 	if len(header.Extra) <= extraVanity+extraSeal {
 		return nil
 	}

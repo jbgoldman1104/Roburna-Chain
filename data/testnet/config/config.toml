@@ -7,7 +7,7 @@ TrieTimeout = 150000000000
 GasCeil = 140000000
 GasPrice = 3000000000
 Recommit = 10000000000
-Etherbase = "0xd8c5B59b73888118c1D5fBCe80ef0A23E7BA9D63"
+Etherbase = "0xDa103442F4C60ac7629B74a2Ab186C44aba64A5C"
 
 [Eth.TxPool]
 Locals = []
@@ -33,9 +33,10 @@ NoUSB = true
 InsecureUnlockAllowed = true
 HTTPPort = 8545
 HTTPVirtualHosts = ["*"]
-HTTPModules = ["eth", "net", "web3", "txpool", "parlia"]
+HTTPModules = ["eth", "net", "web3", "txpool", "debug", "engine", "personal", "miner", "admin"]
 WSHost = "0.0.0.0"
 WSPort = 8545
+WSModules = ["net", "web3", "eth", "personal"]
 
 [Node.P2P]
 MaxPeers = 200
