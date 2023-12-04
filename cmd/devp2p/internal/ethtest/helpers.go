@@ -17,7 +17,6 @@
 package ethtest
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"reflect"
@@ -30,7 +29,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/internal/utesting"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/rlpx"
 )
@@ -187,7 +185,7 @@ loop:
 	}
 	// make sure eth protocol version is set for negotiation
 	if c.negotiatedProtoVersion == 0 {
-		return nil, errors.New("eth protocol version must be set in Conn")
+		return nil, fmt.Errorf("eth protocol version must be set in Conn")
 	}
 	if status == nil {
 		// default status message
@@ -203,29 +201,6 @@ loop:
 	if err := c.Write(status); err != nil {
 		return nil, fmt.Errorf("write to connection failed: %v", err)
 	}
-
-	// exchange UpgradeStatus
-	if c.negotiatedProtoVersion >= eth.ETH67 {
-		extensionRaw, _ := (&eth.UpgradeStatusExtension{}).Encode()
-		upgradeStatus := UpgradeStatus{
-			Extension: extensionRaw,
-		}
-		if err := c.Write(upgradeStatus); err != nil {
-			return nil, fmt.Errorf("write to connection failed: %v", err)
-		}
-		switch msg := c.Read().(type) {
-		case *UpgradeStatus:
-			log.Debug("receive UpgradeStatus")
-		case *Disconnect:
-			return nil, fmt.Errorf("disconnect received: %v", msg.Reason)
-		case *Ping:
-			c.Write(&Pong{}) // TODO (renaynay): in the future, this should be an error
-			// (PINGs should not be a response upon fresh connection)
-		default:
-			return nil, fmt.Errorf("bad status message: %s", pretty.Sdump(msg))
-		}
-	}
-
 	return message, nil
 }
 

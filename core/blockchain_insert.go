@@ -39,7 +39,7 @@ const statsReportLimit = 8 * time.Second
 
 // report prints statistics if some number of blocks have been processed
 // or more than a few seconds have passed since the last message.
-func (st *insertStats) report(chain []*types.Block, index int, trieDiffNodes, trieBufNodes, trieImmutableBufNodes common.StorageSize, setHead bool) {
+func (st *insertStats) report(chain []*types.Block, index int, dirty common.StorageSize, setHead bool) {
 	// Fetch the timings for the batch
 	var (
 		now     = mclock.Now()
@@ -56,20 +56,14 @@ func (st *insertStats) report(chain []*types.Block, index int, trieDiffNodes, tr
 
 		// Assemble the log context and send it to the logger
 		context := []interface{}{
-			"number", end.Number(), "hash", end.Hash(), "miner", end.Coinbase(),
+			"number", end.Number(), "hash", end.Hash(),
 			"blocks", st.processed, "txs", txs, "mgas", float64(st.usedGas) / 1000000,
 			"elapsed", common.PrettyDuration(elapsed), "mgasps", float64(st.usedGas) * 1000 / float64(elapsed),
 		}
 		if timestamp := time.Unix(int64(end.Time()), 0); time.Since(timestamp) > time.Minute {
 			context = append(context, []interface{}{"age", common.PrettyAge(timestamp)}...)
 		}
-		if trieDiffNodes != 0 { // pathdb
-			context = append(context, []interface{}{"triediffs", trieDiffNodes}...)
-			context = append(context, []interface{}{"triedirty", trieBufNodes}...)
-			context = append(context, []interface{}{"trieimutabledirty", trieImmutableBufNodes}...)
-		} else {
-			context = append(context, []interface{}{"triedirty", trieBufNodes}...)
-		}
+		context = append(context, []interface{}{"dirty", dirty}...)
 
 		if st.queued > 0 {
 			context = append(context, []interface{}{"queued", st.queued}...)
@@ -135,8 +129,6 @@ func (it *insertIterator) next() (*types.Block, error) {
 //
 // Both header and body validation errors (nil too) is cached into the iterator
 // to avoid duplicating work on the following next() call.
-//
-// nolint:unused
 func (it *insertIterator) peek() (*types.Block, error) {
 	// If we reached the end of the chain, abort
 	if it.index+1 >= len(it.chain) {

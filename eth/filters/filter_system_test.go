@@ -43,17 +43,13 @@ import (
 )
 
 type testBackend struct {
-	db                  ethdb.Database
-	sections            uint64
-	txFeed              event.Feed
-	logsFeed            event.Feed
-	rmLogsFeed          event.Feed
-	pendingLogsFeed     event.Feed
-	chainFeed           event.Feed
-	finalizedHeaderFeed event.Feed
-	voteFeed            event.Feed
-	pendingBlock        *types.Block
-	pendingReceipts     types.Receipts
+	db              ethdb.Database
+	sections        uint64
+	txFeed          event.Feed
+	logsFeed        event.Feed
+	rmLogsFeed      event.Feed
+	pendingLogsFeed event.Feed
+	chainFeed       event.Feed
 }
 
 func (b *testBackend) ChainConfig() *params.ChainConfig {
@@ -83,7 +79,12 @@ func (b *testBackend) HeaderByNumber(ctx context.Context, blockNr rpc.BlockNumbe
 		}
 		num = *number
 	case rpc.FinalizedBlockNumber:
-		return nil, errors.New("finalized block not found")
+		hash = rawdb.ReadFinalizedBlockHash(b.db)
+		number := rawdb.ReadHeaderNumber(b.db, hash)
+		if number == nil {
+			return nil, nil
+		}
+		num = *number
 	case rpc.SafeBlockNumber:
 		return nil, errors.New("safe block not found")
 	default:
@@ -110,9 +111,7 @@ func (b *testBackend) GetBody(ctx context.Context, hash common.Hash, number rpc.
 
 func (b *testBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
 	if number := rawdb.ReadHeaderNumber(b.db, hash); number != nil {
-		if header := rawdb.ReadHeader(b.db, hash, *number); header != nil {
-			return rawdb.ReadReceipts(b.db, hash, *number, header.Time, params.TestChainConfig), nil
-		}
+		return rawdb.ReadReceipts(b.db, hash, *number, params.TestChainConfig), nil
 	}
 	return nil, nil
 }
@@ -123,7 +122,7 @@ func (b *testBackend) GetLogs(ctx context.Context, hash common.Hash, number uint
 }
 
 func (b *testBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
-	return b.pendingBlock, b.pendingReceipts
+	return nil, nil
 }
 
 func (b *testBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
@@ -144,14 +143,6 @@ func (b *testBackend) SubscribePendingLogsEvent(ch chan<- []*types.Log) event.Su
 
 func (b *testBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
 	return b.chainFeed.Subscribe(ch)
-}
-
-func (b *testBackend) SubscribeFinalizedHeaderEvent(ch chan<- core.FinalizedHeaderEvent) event.Subscription {
-	return b.finalizedHeaderFeed.Subscribe(ch)
-}
-
-func (b *testBackend) SubscribeNewVoteEvent(ch chan<- core.NewVoteEvent) event.Subscription {
-	return b.voteFeed.Subscribe(ch)
 }
 
 func (b *testBackend) BloomStatus() (uint64, uint64) {
@@ -202,7 +193,7 @@ func TestBlockSubscription(t *testing.T) {
 	var (
 		db           = rawdb.NewMemoryDatabase()
 		backend, sys = newTestFilterSystem(t, db, Config{})
-		api          = NewFilterAPI(sys, false, false)
+		api          = NewFilterAPI(sys, false)
 		genesis      = &core.Genesis{
 			Config:  params.TestChainConfig,
 			BaseFee: big.NewInt(params.InitialBaseFee),
@@ -257,7 +248,7 @@ func TestPendingTxFilter(t *testing.T) {
 	var (
 		db           = rawdb.NewMemoryDatabase()
 		backend, sys = newTestFilterSystem(t, db, Config{})
-		api          = NewFilterAPI(sys, false, false)
+		api          = NewFilterAPI(sys, false)
 
 		transactions = []*types.Transaction{
 			types.NewTransaction(0, common.HexToAddress("0xb794f5ea0ba39494ce83a213fffba74279579268"), new(big.Int), 0, new(big.Int), nil),
@@ -313,7 +304,7 @@ func TestPendingTxFilterFullTx(t *testing.T) {
 	var (
 		db           = rawdb.NewMemoryDatabase()
 		backend, sys = newTestFilterSystem(t, db, Config{})
-		api          = NewFilterAPI(sys, false, false)
+		api          = NewFilterAPI(sys, false)
 
 		transactions = []*types.Transaction{
 			types.NewTransaction(0, common.HexToAddress("0xb794f5ea0ba39494ce83a213fffba74279579268"), new(big.Int), 0, new(big.Int), nil),
@@ -369,7 +360,7 @@ func TestLogFilterCreation(t *testing.T) {
 	var (
 		db     = rawdb.NewMemoryDatabase()
 		_, sys = newTestFilterSystem(t, db, Config{})
-		api    = NewFilterAPI(sys, false, false)
+		api    = NewFilterAPI(sys, false)
 
 		testCases = []struct {
 			crit    FilterCriteria
@@ -416,7 +407,7 @@ func TestInvalidLogFilterCreation(t *testing.T) {
 	var (
 		db     = rawdb.NewMemoryDatabase()
 		_, sys = newTestFilterSystem(t, db, Config{})
-		api    = NewFilterAPI(sys, false, false)
+		api    = NewFilterAPI(sys, false)
 	)
 
 	// different situations where log filter creation should fail.
@@ -438,7 +429,7 @@ func TestInvalidGetLogsRequest(t *testing.T) {
 	var (
 		db        = rawdb.NewMemoryDatabase()
 		_, sys    = newTestFilterSystem(t, db, Config{})
-		api       = NewFilterAPI(sys, false, false)
+		api       = NewFilterAPI(sys, false)
 		blockHash = common.HexToHash("0x1111111111111111111111111111111111111111111111111111111111111111")
 	)
 
@@ -463,7 +454,7 @@ func TestLogFilter(t *testing.T) {
 	var (
 		db           = rawdb.NewMemoryDatabase()
 		backend, sys = newTestFilterSystem(t, db, Config{})
-		api          = NewFilterAPI(sys, false, false)
+		api          = NewFilterAPI(sys, false)
 
 		firstAddr      = common.HexToAddress("0x1111111111111111111111111111111111111111")
 		secondAddr     = common.HexToAddress("0x2222222222222222222222222222222222222222")
@@ -577,7 +568,7 @@ func TestPendingLogsSubscription(t *testing.T) {
 	var (
 		db           = rawdb.NewMemoryDatabase()
 		backend, sys = newTestFilterSystem(t, db, Config{})
-		api          = NewFilterAPI(sys, false, false)
+		api          = NewFilterAPI(sys, false)
 
 		firstAddr      = common.HexToAddress("0x1111111111111111111111111111111111111111")
 		secondAddr     = common.HexToAddress("0x2222222222222222222222222222222222222222")
@@ -757,7 +748,7 @@ func TestLightFilterLogs(t *testing.T) {
 	var (
 		db           = rawdb.NewMemoryDatabase()
 		backend, sys = newTestFilterSystem(t, db, Config{})
-		api          = NewFilterAPI(sys, true, false)
+		api          = NewFilterAPI(sys, true)
 		signer       = types.HomesteadSigner{}
 
 		firstAddr      = common.HexToAddress("0x1111111111111111111111111111111111111111")
@@ -898,7 +889,7 @@ func TestPendingTxFilterDeadlock(t *testing.T) {
 	var (
 		db           = rawdb.NewMemoryDatabase()
 		backend, sys = newTestFilterSystem(t, db, Config{Timeout: timeout})
-		api          = NewFilterAPI(sys, false, false)
+		api          = NewFilterAPI(sys, false)
 		done         = make(chan struct{})
 	)
 
@@ -961,80 +952,4 @@ func flattenLogs(pl [][]*types.Log) []*types.Log {
 		logs = append(logs, l...)
 	}
 	return logs
-}
-
-func TestVoteSubscription(t *testing.T) {
-	t.Parallel()
-
-	var (
-		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(t, db, Config{Timeout: 5 * time.Minute})
-		api          = NewFilterAPI(sys, false, false)
-		votes        = []*types.VoteEnvelope{
-			&types.VoteEnvelope{
-				VoteAddress: types.BLSPublicKey{},
-				Signature:   types.BLSSignature{},
-				Data: &types.VoteData{
-					SourceNumber: uint64(0),
-					SourceHash:   common.BytesToHash(common.Hex2Bytes(string(rune(0)))),
-					TargetNumber: uint64(1),
-					TargetHash:   common.BytesToHash(common.Hex2Bytes(string(rune(1)))),
-				},
-			},
-			&types.VoteEnvelope{
-				VoteAddress: types.BLSPublicKey{},
-				Signature:   types.BLSSignature{},
-				Data: &types.VoteData{
-					SourceNumber: uint64(0),
-					SourceHash:   common.BytesToHash(common.Hex2Bytes(string(rune(0)))),
-					TargetNumber: uint64(2),
-					TargetHash:   common.BytesToHash(common.Hex2Bytes(string(rune(2)))),
-				},
-			},
-			&types.VoteEnvelope{
-				VoteAddress: types.BLSPublicKey{},
-				Signature:   types.BLSSignature{},
-				Data: &types.VoteData{
-					SourceNumber: uint64(0),
-					SourceHash:   common.BytesToHash(common.Hex2Bytes(string(rune(0)))),
-					TargetNumber: uint64(3),
-					TargetHash:   common.BytesToHash(common.Hex2Bytes(string(rune(3)))),
-				},
-			},
-			&types.VoteEnvelope{
-				VoteAddress: types.BLSPublicKey{},
-				Signature:   types.BLSSignature{},
-				Data: &types.VoteData{
-					SourceNumber: uint64(0),
-					SourceHash:   common.BytesToHash(common.Hex2Bytes(string(rune(0)))),
-					TargetNumber: uint64(4),
-					TargetHash:   common.BytesToHash(common.Hex2Bytes(string(rune(4)))),
-				},
-			},
-		}
-	)
-
-	chan0 := make(chan *types.VoteEnvelope)
-	sub0 := api.events.SubscribeNewVotes(chan0)
-
-	go func() { // simulate client
-		i := 0
-		for i != len(votes) {
-			vote := <-chan0
-			if votes[i].Hash() != vote.Hash() {
-				t.Errorf("sub received invalid hash on index %d, want %x, got %x", i, votes[i].Hash(), vote.Hash())
-			}
-			i++
-		}
-
-		sub0.Unsubscribe()
-	}()
-
-	time.Sleep(1 * time.Second)
-	for _, v := range votes {
-		ev := core.NewVoteEvent{Vote: v}
-		backend.voteFeed.Send(ev)
-	}
-
-	<-sub0.Err()
 }

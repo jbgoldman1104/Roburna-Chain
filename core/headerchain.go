@@ -104,34 +104,7 @@ func NewHeaderChain(chainDb ethdb.Database, config *params.ChainConfig, engine c
 	}
 	hc.currentHeaderHash = hc.CurrentHeader().Hash()
 	headHeaderGauge.Update(hc.CurrentHeader().Number.Int64())
-	justifiedBlockGauge.Update(int64(hc.GetJustifiedNumber(hc.CurrentHeader())))
-	finalizedBlockGauge.Update(int64(hc.getFinalizedNumber(hc.CurrentHeader())))
-
 	return hc, nil
-}
-
-// GetJustifiedNumber returns the highest justified blockNumber on the branch including and before `header`.
-func (hc *HeaderChain) GetJustifiedNumber(header *types.Header) uint64 {
-	if p, ok := hc.engine.(consensus.PoSA); ok {
-		justifiedBlockNumber, _, err := p.GetJustifiedNumberAndHash(hc, header)
-		if err == nil {
-			return justifiedBlockNumber
-		}
-	}
-	// return 0 when err!=nil
-	// so the input `header` will at a disadvantage during reorg
-	return 0
-}
-
-// getFinalizedNumber returns the highest finalized number before the specific block.
-func (hc *HeaderChain) getFinalizedNumber(header *types.Header) uint64 {
-	if p, ok := hc.engine.(consensus.PoSA); ok {
-		if finalizedHeader := p.GetFinalizedHeader(hc, header); finalizedHeader != nil {
-			return finalizedHeader.Number.Uint64()
-		}
-	}
-
-	return 0
 }
 
 // GetBlockNumber retrieves the block number belonging to the given hash
@@ -306,7 +279,7 @@ func (hc *HeaderChain) writeHeadersAndSetHead(headers []*types.Header, forker *F
 		}
 	)
 	// Ask the fork choicer if the reorg is necessary
-	if reorg, err := forker.ReorgNeededWithFastFinality(hc.CurrentHeader(), lastHeader); err != nil {
+	if reorg, err := forker.ReorgNeeded(hc.CurrentHeader(), lastHeader); err != nil {
 		return nil, err
 	} else if !reorg {
 		if inserted != 0 {
@@ -315,7 +288,7 @@ func (hc *HeaderChain) writeHeadersAndSetHead(headers []*types.Header, forker *F
 		return result, nil
 	}
 	// Special case, all the inserted headers are already on the canonical
-	// heaeder chain, skip the reorg operation.
+	// header chain, skip the reorg operation.
 	if hc.GetCanonicalHash(lastHeader.Number.Uint64()) == lastHash && lastHeader.Number.Uint64() <= hc.CurrentHeader().Number.Uint64() {
 		return result, nil
 	}
@@ -327,7 +300,7 @@ func (hc *HeaderChain) writeHeadersAndSetHead(headers []*types.Header, forker *F
 	return result, nil
 }
 
-func (hc *HeaderChain) ValidateHeaderChain(chain []*types.Header) (int, error) {
+func (hc *HeaderChain) ValidateHeaderChain(chain []*types.Header, checkFreq int) (int, error) {
 	// Do a sanity check that the provided chain is actually ordered and linked
 	for i := 1; i < len(chain); i++ {
 		if chain[i].Number.Uint64() != chain[i-1].Number.Uint64()+1 {
@@ -349,8 +322,23 @@ func (hc *HeaderChain) ValidateHeaderChain(chain []*types.Header) (int, error) {
 			return i, ErrBannedHash
 		}
 	}
-	// Start the parallel verifier
-	abort, results := hc.engine.VerifyHeaders(hc, chain)
+
+	// Generate the list of seal verification requests, and start the parallel verifier
+	seals := make([]bool, len(chain))
+	if checkFreq != 0 {
+		// In case of checkFreq == 0 all seals are left false.
+		for i := 0; i <= len(seals)/checkFreq; i++ {
+			index := i*checkFreq + hc.rand.Intn(checkFreq)
+			if index >= len(seals) {
+				index = len(seals) - 1
+			}
+			seals[index] = true
+		}
+		// Last should always be verified to avoid junk.
+		seals[len(seals)-1] = true
+	}
+
+	abort, results := hc.engine.VerifyHeaders(hc, chain, seals)
 	defer close(abort)
 
 	// Iterate over the headers and ensure they all check out
@@ -403,33 +391,6 @@ func (hc *HeaderChain) InsertHeaderChain(chain []*types.Header, start time.Time,
 	}
 	log.Debug("Imported new block headers", context...)
 	return res.status, err
-}
-
-// GetBlockHashesFromHash retrieves a number of block hashes starting at a given
-// hash, fetching towards the genesis block.
-func (hc *HeaderChain) GetBlockHashesFromHash(hash common.Hash, max uint64) []common.Hash {
-	// Get the origin header from which to fetch
-	header := hc.GetHeaderByHash(hash)
-	if header == nil {
-		return nil
-	}
-	// Iterate the headers until enough is collected or the genesis reached
-	chain := make([]common.Hash, 0, max)
-	for i := uint64(0); i < max; i++ {
-		next := header.ParentHash
-		if header = hc.GetHeader(next, header.Number.Uint64()-1); header == nil {
-			break
-		}
-		chain = append(chain, next)
-		if header.Number.Sign() == 0 {
-			break
-		}
-	}
-	return chain
-}
-
-func (hc *HeaderChain) GetHighestVerifiedHeader() *types.Header {
-	return nil
 }
 
 // GetAncestor retrieves the Nth ancestor of a given block. It assumes that either the given block or
@@ -588,8 +549,6 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.Header) {
 	hc.currentHeader.Store(head)
 	hc.currentHeaderHash = head.Hash()
 	headHeaderGauge.Update(head.Number.Int64())
-	justifiedBlockGauge.Update(int64(hc.GetJustifiedNumber(head)))
-	finalizedBlockGauge.Update(int64(hc.getFinalizedNumber(head)))
 }
 
 type (
@@ -676,8 +635,6 @@ func (hc *HeaderChain) setHead(headBlock uint64, headTime uint64, updateFn Updat
 		hc.currentHeader.Store(parent)
 		hc.currentHeaderHash = parentHash
 		headHeaderGauge.Update(parent.Number.Int64())
-		justifiedBlockGauge.Update(int64(hc.GetJustifiedNumber(parent)))
-		finalizedBlockGauge.Update(int64(hc.getFinalizedNumber(parent)))
 
 		// If this is the first iteration, wipe any leftover data upwards too so
 		// we don't end up with dangling daps in the database

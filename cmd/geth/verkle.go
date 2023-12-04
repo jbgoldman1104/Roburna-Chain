@@ -74,7 +74,7 @@ func checkChildren(root verkle.VerkleNode, resolver verkle.NodeResolverFn) error
 	switch node := root.(type) {
 	case *verkle.InternalNode:
 		for i, child := range node.Children() {
-			childC := child.Commit().Bytes()
+			childC := child.ComputeCommitment().Bytes()
 
 			childS, err := resolver(childC[:])
 			if bytes.Equal(childC[:], zero[:]) {
@@ -86,7 +86,7 @@ func checkChildren(root verkle.VerkleNode, resolver verkle.NodeResolverFn) error
 			// depth is set to 0, the tree isn't rebuilt so it's not a problem
 			childN, err := verkle.ParseNode(childS, 0, childC[:])
 			if err != nil {
-				return fmt.Errorf("decode error child %x in db: %w", child.Commitment().Bytes(), err)
+				return fmt.Errorf("decode error child %x in db: %w", child.ComputeCommitment().Bytes(), err)
 			}
 			if err := checkChildren(childN, resolver); err != nil {
 				return fmt.Errorf("%x%w", i, err) // write the path to the erroring node
@@ -100,7 +100,7 @@ func checkChildren(root verkle.VerkleNode, resolver verkle.NodeResolverFn) error
 				return nil
 			}
 		}
-		return errors.New("both balance and nonce are 0")
+		return fmt.Errorf("Both balance and nonce are 0")
 	case verkle.Empty:
 		// nothing to do
 	default:
@@ -114,7 +114,7 @@ func verifyVerkle(ctx *cli.Context) error {
 	stack, _ := makeConfigNode(ctx)
 	defer stack.Close()
 
-	chaindb := utils.MakeChainDatabase(ctx, stack, true, false)
+	chaindb := utils.MakeChainDatabase(ctx, stack, true)
 	headBlock := rawdb.ReadHeadBlock(chaindb)
 	if headBlock == nil {
 		log.Error("Failed to load head block")
@@ -162,7 +162,7 @@ func expandVerkle(ctx *cli.Context) error {
 	stack, _ := makeConfigNode(ctx)
 	defer stack.Close()
 
-	chaindb := utils.MakeChainDatabase(ctx, stack, true, false)
+	chaindb := utils.MakeChainDatabase(ctx, stack, true)
 	var (
 		rootC   common.Hash
 		keylist [][]byte

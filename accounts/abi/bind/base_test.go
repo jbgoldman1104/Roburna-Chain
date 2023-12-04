@@ -31,7 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/stretchr/testify/assert"
 )
@@ -73,10 +72,6 @@ func (mt *mockTransactor) EstimateGas(ctx context.Context, call ethereum.CallMsg
 }
 
 func (mt *mockTransactor) SendTransaction(ctx context.Context, tx *types.Transaction) error {
-	return nil
-}
-
-func (mt *mockTransactor) SendTransactionConditional(ctx context.Context, tx *types.Transaction, opts ethapi.TransactionOpts) error {
 	return nil
 }
 

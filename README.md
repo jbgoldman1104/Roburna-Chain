@@ -1,67 +1,22 @@
-## BNB Smart Chain
+## Go Ethereum
 
-The goal of BNB Smart Chain is to bring programmability and interoperability to BNB Beacon Chain. In order to embrace the existing popular community and advanced technology, it will bring huge benefits by staying compatible with all the existing smart contracts on Ethereum and Ethereum tooling. And to achieve that, the easiest solution is to develop based on go-ethereum fork, as we respect the great work of Ethereum very much.
-
-BNB Smart Chain starts its development based on go-ethereum fork. So you may see many toolings, binaries and also docs are based on Ethereum ones, such as the name “geth”.
+Official Golang execution layer implementation of the Ethereum protocol.
 
 [![API Reference](
 https://camo.githubusercontent.com/915b7be44ada53c290eb157634330494ebe3e30a/68747470733a2f2f676f646f632e6f72672f6769746875622e636f6d2f676f6c616e672f6764646f3f7374617475732e737667
 )](https://pkg.go.dev/github.com/ethereum/go-ethereum?tab=doc)
-[![Discord](https://img.shields.io/badge/discord-join%20chat-blue.svg)](https://discord.gg/z2VpC455eU)
+[![Go Report Card](https://goreportcard.com/badge/github.com/ethereum/go-ethereum)](https://goreportcard.com/report/github.com/ethereum/go-ethereum)
+[![Travis](https://travis-ci.com/ethereum/go-ethereum.svg?branch=master)](https://travis-ci.com/ethereum/go-ethereum)
+[![Discord](https://img.shields.io/badge/discord-join%20chat-blue.svg)](https://discord.gg/nthXNEv)
 
-But from that baseline of EVM compatible, BNB Smart Chain introduces  a system of 21 validators with Proof of Staked Authority (PoSA) consensus that can support short block time and lower fees. The most bonded validator candidates of staking will become validators and produce blocks. The double-sign detection and other slashing logic guarantee security, stability, and chain finality.
-
-Cross-chain transfer and other communication are possible due to native support of interoperability. Relayers and on-chain contracts are developed to support that. BNB Beacon Chain DEX remains a liquid venue of the exchange of assets on both chains. This dual-chain architecture will be ideal for users to take advantage of the fast trading on one side and build their decentralized apps on the other side. **The BNB Smart Chain** will be:
-
-- **A self-sovereign blockchain**: Provides security and safety with elected validators.
-- **EVM-compatible**: Supports all the existing Ethereum tooling along with faster finality and cheaper transaction fees.
-- **Interoperable**: Comes with efficient native dual chain communication; Optimized for scaling high-performance dApps that require fast and smooth user experience.
-- **Distributed with on-chain governance**: Proof of Staked Authority brings in decentralization and community participants. As the native token, BNB will serve as both the gas of smart contract execution and tokens for staking.
-
-More details in [White Paper](https://www.bnbchain.org/en#smartChain).
-
-## Key features
-
-### Proof of Staked Authority 
-Although Proof-of-Work (PoW) has been approved as a practical mechanism to implement a decentralized network, it is not friendly to the environment and also requires a large size of participants to maintain the security. 
-
-Proof-of-Authority(PoA) provides some defense to 51% attack, with improved efficiency and tolerance to certain levels of Byzantine players (malicious or hacked). 
-Meanwhile, the PoA protocol is most criticized for being not as decentralized as PoW, as the validators, i.e. the nodes that take turns to produce blocks, have all the authorities and are prone to corruption and security attacks.
-
-Other blockchains, such as EOS and Cosmos both, introduce different types of Deputy Proof of Stake (DPoS) to allow the token holders to vote and elect the validator set. It increases the decentralization and favors community governance. 
-
-To combine DPoS and PoA for consensus, BNB Smart Chain implement a novel consensus engine called Parlia that:
-
-1. Blocks are produced by a limited set of validators.
-2. Validators take turns to produce blocks in a PoA manner, similar to Ethereum's Clique consensus engine.
-3. Validator set are elected in and out based on a staking based governance on BNB Beacon Chain.
-4. The validator set change is relayed via a cross-chain communication mechanism.
-5. Parlia consensus engine will interact with a set of [system contracts](https://docs.bnbchain.org/docs/learn/system-contract) to achieve liveness slash, revenue distributing and validator set renewing func.
-
- 
-### Light Client of BNB Beacon Chain
-
-To achieve the cross-chain communication from BNB Beacon Chain to BNB Smart Chain, need introduce a on-chain light client verification algorithm.
-It contains two parts:
-
-1. [Stateless Precompiled contracts](https://github.com/bnb-chain/bsc/blob/master/core/vm/contracts_lightclient.go) to do tendermint header verification and Merkle Proof verification.
-2. [Stateful solidity contracts](https://github.com/bnb-chain/bsc-genesis-contract/blob/master/contracts/TendermintLightClient.sol) to store validator set and trusted appHash.  
-
-## Native Token
-
-BNB will run on BNB Smart Chain in the same way as ETH runs on Ethereum so that it remains as `native token` for BSC. This means,
-BNB will be used to:
-
-1. pay `gas` to deploy or invoke Smart Contract on BSC
-2. perform cross-chain operations, such as transfer token assets across BNB Smart Chain and BNB Beacon Chain.
+Automated builds are available for stable releases and the unstable master branch. Binary
+archives are published at https://geth.ethereum.org/downloads/.
 
 ## Building the source
 
-Many of the below are the same as or similar to go-ethereum.
-
 For prerequisites and detailed build instructions please read the [Installation Instructions](https://geth.ethereum.org/docs/getting-started/installing-geth).
 
-Building `geth` requires both a Go (version 1.20 or later) and a C compiler (GCC 5 or higher). You can install
+Building `geth` requires both a Go (version 1.19 or later) and a C compiler. You can install
 them using your favourite package manager. Once the dependencies are installed, run
 
 ```shell
@@ -74,30 +29,20 @@ or, to build the full suite of utilities:
 make all
 ```
 
-If you get such error when running the node with self built binary:
-```shell
-Caught SIGILL in blst_cgo_init, consult <blst>/bindinds/go/README.md.
-```
-please try to add the following environment variables and build again:
-```shell
-export CGO_CFLAGS="-O -D__BLST_PORTABLE__" 
-export CGO_CFLAGS_ALLOW="-O -D__BLST_PORTABLE__"
-```
-
 ## Executables
 
-The bsc project comes with several wrappers/executables found in the `cmd`
+The go-ethereum project comes with several wrappers/executables found in the `cmd`
 directory.
 
-|  Command   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| :--------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`geth`** | Main BNB Smart Chain client binary. It is the entry point into the BSC network (main-, test- or private net), capable of running as a full node (default), archive node (retaining all historical state) or a light node (retrieving data live). It has the same and more RPC and other interface as go-ethereum and can be used by other processes as a gateway into the BSC network via JSON RPC endpoints exposed on top of HTTP, WebSocket and/or IPC transports. `geth --help` and the [CLI page](https://geth.ethereum.org/docs/interface/command-line-options) for command line options. |
-|   `clef`   | Stand-alone signing tool, which can be used as a backend signer for `geth`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-|  `devp2p`  | Utilities to interact with nodes on the networking layer, without running a full blockchain.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-|  `abigen`  | Source code generator to convert Ethereum contract definitions into easy to use, compile-time type-safe Go packages. It operates on plain [Ethereum contract ABIs](https://docs.soliditylang.org/en/develop/abi-spec.html) with expanded functionality if the contract bytecode is also available. However, it also accepts Solidity source files, making development much more streamlined. Please see our [Native DApps](https://geth.ethereum.org/docs/dapp/native-bindings) page for details.                                                                                               |
-| `bootnode` | Stripped down version of our Ethereum client implementation that only takes part in the network node discovery protocol, but does not run any of the higher level application protocols. It can be used as a lightweight bootstrap node to aid in finding peers in private networks.                                                                                                                                                                                                                                                                                                            |
-|   `evm`    | Developer utility version of the EVM (Ethereum Virtual Machine) that is capable of running bytecode snippets within a configurable environment and execution mode. Its purpose is to allow isolated, fine-grained debugging of EVM opcodes (e.g. `evm --code 60ff60ff --debug run`).                                                                                                                                                                                                                                                                                                            |
-| `rlpdump`  | Developer utility tool to convert binary RLP ([Recursive Length Prefix](https://ethereum.org/en/developers/docs/data-structures-and-encoding/rlp)) dumps (data encoding used by the Ethereum protocol both network as well as consensus wise) to user-friendlier hierarchical representation (e.g. `rlpdump --hex CE0183FFFFFFC4C304050583616263`).                                                                                                                                                                                                                                                                                 |
+|  Command   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| :--------: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`geth`** | Our main Ethereum CLI client. It is the entry point into the Ethereum network (main-, test- or private net), capable of running as a full node (default), archive node (retaining all historical state) or a light node (retrieving data live). It can be used by other processes as a gateway into the Ethereum network via JSON RPC endpoints exposed on top of HTTP, WebSocket and/or IPC transports. `geth --help` and the [CLI page](https://geth.ethereum.org/docs/fundamentals/command-line-options) for command line options. |
+|   `clef`   | Stand-alone signing tool, which can be used as a backend signer for `geth`.                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+|  `devp2p`  | Utilities to interact with nodes on the networking layer, without running a full blockchain.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+|  `abigen`  | Source code generator to convert Ethereum contract definitions into easy-to-use, compile-time type-safe Go packages. It operates on plain [Ethereum contract ABIs](https://docs.soliditylang.org/en/develop/abi-spec.html) with expanded functionality if the contract bytecode is also available. However, it also accepts Solidity source files, making development much more streamlined. Please see our [Native DApps](https://geth.ethereum.org/docs/developers/dapp-developer/native-bindings) page for details.                                  |
+| `bootnode` | Stripped down version of our Ethereum client implementation that only takes part in the network node discovery protocol, but does not run any of the higher level application protocols. It can be used as a lightweight bootstrap node to aid in finding peers in private networks.                                                                                                                                                                                                                                               |
+|   `evm`    | Developer utility version of the EVM (Ethereum Virtual Machine) that is capable of running bytecode snippets within a configurable environment and execution mode. Its purpose is to allow isolated, fine-grained debugging of EVM opcodes (e.g. `evm --code 60ff60ff --debug run`).                                                                                                                                                                                                                                               |
+| `rlpdump`  | Developer utility tool to convert binary RLP ([Recursive Length Prefix](https://ethereum.org/en/developers/docs/data-structures-and-encoding/rlp)) dumps (data encoding used by the Ethereum protocol both network as well as consensus wise) to user-friendlier hierarchical representation (e.g. `rlpdump --hex CE0183FFFFFFC4C304050583616263`).                                                                                                                                                                                |
 
 ## Running `geth`
 
@@ -108,83 +53,84 @@ on how you can run your own `geth` instance.
 
 ### Hardware Requirements
 
-The hardware must meet certain requirements to run a full node on mainnet:
-- VPS running recent versions of Mac OS X, Linux, or Windows.
-- IMPORTANT 2.5 TB(May 2023) of free disk space, solid-state drive(SSD), gp3, 8k IOPS, 250 MB/S throughput, read latency <1ms. (if node is started with snap sync, it will need NVMe SSD)
-- 16 cores of CPU and 64 GB of memory (RAM)
-- Suggest m5zn.3xlarge instance type on AWS, c2-standard-16 on Google cloud.
-- A broadband Internet connection with upload/download speeds of 5 MB/S
+Minimum:
 
-The requirement for testnet:
-- VPS running recent versions of Mac OS X, Linux, or Windows.
-- 500G of storage for testnet.
-- 4 cores of CPU and 8 gigabytes of memory (RAM).
+* CPU with 2+ cores
+* 4GB RAM
+* 1TB free storage space to sync the Mainnet
+* 8 MBit/sec download Internet service
 
-### Steps to Run a Fullnode
+Recommended:
 
-#### 1. Download the pre-build binaries
+* Fast CPU with 4+ cores
+* 16GB+ RAM
+* High-performance SSD with at least 1TB of free space
+* 25+ MBit/sec download Internet service
+
+### Full node on the main Ethereum network
+
+By far the most common scenario is people wanting to simply interact with the Ethereum
+network: create accounts; transfer funds; deploy and interact with contracts. For this
+particular use case, the user doesn't care about years-old historical data, so we can
+sync quickly to the current state of the network. To do so:
+
 ```shell
-# Linux
-wget $(curl -s https://api.github.com/repos/bnb-chain/bsc/releases/latest |grep browser_ |grep geth_linux |cut -d\" -f4)
-mv geth_linux geth
-chmod -v u+x geth
-
-# MacOS
-wget $(curl -s https://api.github.com/repos/bnb-chain/bsc/releases/latest |grep browser_ |grep geth_mac |cut -d\" -f4)
-mv geth_macos geth
-chmod -v u+x geth
+$ geth console
 ```
 
-#### 2. Download the config files
-```shell
-//== mainnet
-wget $(curl -s https://api.github.com/repos/bnb-chain/bsc/releases/latest |grep browser_ |grep mainnet |cut -d\" -f4)
-unzip mainnet.zip
+This command will:
+ * Start `geth` in snap sync mode (default, can be changed with the `--syncmode` flag),
+   causing it to download more data in exchange for avoiding processing the entire history
+   of the Ethereum network, which is very CPU intensive.
+ * Start the built-in interactive [JavaScript console](https://geth.ethereum.org/docs/interacting-with-geth/javascript-console),
+   (via the trailing `console` subcommand) through which you can interact using [`web3` methods](https://github.com/ChainSafe/web3.js/blob/0.20.7/DOCUMENTATION.md) 
+   (note: the `web3` version bundled within `geth` is very old, and not up to date with official docs),
+   as well as `geth`'s own [management APIs](https://geth.ethereum.org/docs/interacting-with-geth/rpc).
+   This tool is optional and if you leave it out you can always attach it to an already running
+   `geth` instance with `geth attach`.
 
-//== testnet
-wget $(curl -s https://api.github.com/repos/bnb-chain/bsc/releases/latest |grep browser_ |grep testnet |cut -d\" -f4)
-unzip testnet.zip
+### A Full node on the Görli test network
+
+Transitioning towards developers, if you'd like to play around with creating Ethereum
+contracts, you almost certainly would like to do that without any real money involved until
+you get the hang of the entire system. In other words, instead of attaching to the main
+network, you want to join the **test** network with your node, which is fully equivalent to
+the main network, but with play-Ether only.
+
+```shell
+$ geth --goerli console
 ```
 
-#### 3. Download snapshot
-Download latest chaindata snapshot from [here](https://github.com/bnb-chain/bsc-snapshots). Follow the guide to structure your files.
+The `console` subcommand has the same meaning as above and is equally
+useful on the testnet too.
 
-Note: if you can not download the chaindata snapshot and want to sync from genesis, you have to generate the genesis block first, you have already get the genesis.json in Step 2.
-So just run: `geth --datadir <datadir> init ./genesis.json`
-#### 4. Start a full node
-```shell
-./geth --config ./config.toml --datadir ./node  --cache 8000 --rpc.allow-unprotected-txs --txlookuplimit 0
+Specifying the `--goerli` flag, however, will reconfigure your `geth` instance a bit:
 
-## It is recommand to run fullnode with `--tries-verify-mode none` if you want high performance and care little about state consistency
-./geth --config ./config.toml --datadir ./node  --cache 8000 --rpc.allow-unprotected-txs --txlookuplimit 0 --tries-verify-mode none
-```
-
-#### 5. Monitor node status
-
-Monitor the log from **./node/bsc.log** by default. When the node has started syncing, should be able to see the following output:
-```shell
-t=2022-09-08T13:00:27+0000 lvl=info msg="Imported new chain segment"             blocks=1    txs=177   mgas=17.317   elapsed=31.131ms    mgasps=556.259  number=21,153,429 hash=0x42e6b54ba7106387f0650defc62c9ace3160b427702dab7bd1c5abb83a32d8db dirty="0.00 B"
-t=2022-09-08T13:00:29+0000 lvl=info msg="Imported new chain segment"             blocks=1    txs=251   mgas=39.638   elapsed=68.827ms    mgasps=575.900  number=21,153,430 hash=0xa3397b273b31b013e43487689782f20c03f47525b4cd4107c1715af45a88796e dirty="0.00 B"
-t=2022-09-08T13:00:33+0000 lvl=info msg="Imported new chain segment"             blocks=1    txs=197   mgas=19.364   elapsed=34.663ms    mgasps=558.632  number=21,153,431 hash=0x0c7872b698f28cb5c36a8a3e1e315b1d31bda6109b15467a9735a12380e2ad14 dirty="0.00 B"
-```
-
-#### 6. Interact with fullnode
-Start up `geth`'s built-in interactive [JavaScript console](https://geth.ethereum.org/docs/interface/javascript-console),
-(via the trailing `console` subcommand) through which you can interact using [`web3` methods](https://web3js.readthedocs.io/en/) 
-(note: the `web3` version bundled within `geth` is very old, and not up to date with official docs),
-as well as `geth`'s own [management APIs](https://geth.ethereum.org/docs/rpc/server).
-This tool is optional and if you leave it out you can always attach to an already running
-`geth` instance with `geth attach`.
-
-#### 7. More
-
-More details about [running a node](https://docs.bnbchain.org/docs/validator/fullnode) and [becoming a validator](https://docs.bnbchain.org/docs/validator/create-val)
+ * Instead of connecting to the main Ethereum network, the client will connect to the Görli
+   test network, which uses different P2P bootnodes, different network IDs and genesis
+   states.
+ * Instead of using the default data directory (`~/.ethereum` on Linux for example), `geth`
+   will nest itself one level deeper into a `goerli` subfolder (`~/.ethereum/goerli` on
+   Linux). Note, on OSX and Linux this also means that attaching to a running testnet node
+   requires the use of a custom endpoint since `geth attach` will try to attach to a
+   production node endpoint by default, e.g.,
+   `geth attach <datadir>/goerli/geth.ipc`. Windows users are not affected by
+   this.
 
 *Note: Although some internal protective measures prevent transactions from
 crossing over between the main network and test network, you should always
 use separate accounts for play and real money. Unless you manually move
 accounts, `geth` will by default correctly separate the two networks and will not make any
 accounts available between them.*
+
+### Full node on the Rinkeby test network
+
+Go Ethereum also supports connecting to the older proof-of-authority based test network
+called [*Rinkeby*](https://www.rinkeby.io) which is operated by members of the community.
+
+```shell
+$ geth --rinkeby console
+```
 
 ### Configuration
 
@@ -202,10 +148,32 @@ export your existing configuration:
 $ geth --your-favourite-flags dumpconfig
 ```
 
+*Note: This works only with `geth` v1.6.0 and above.*
+
+#### Docker quick start
+
+One of the quickest ways to get Ethereum up and running on your machine is by using
+Docker:
+
+```shell
+docker run -d --name ethereum-node -v /Users/alice/ethereum:/root \
+           -p 8545:8545 -p 30303:30303 \
+           ethereum/client-go
+```
+
+This will start `geth` in snap-sync mode with a DB memory allowance of 1GB, as the
+above command does.  It will also create a persistent volume in your home directory for
+saving your blockchain as well as map the default ports. There is also an `alpine` tag
+available for a slim version of the image.
+
+Do not forget `--http.addr 0.0.0.0`, if you want to access RPC from other containers
+and/or hosts. By default, `geth` binds to the local interface and RPC endpoints are not
+accessible from the outside.
+
 ### Programmatically interfacing `geth` nodes
 
 As a developer, sooner rather than later you'll want to start interacting with `geth` and the
-BSC network via your own programs and not manually through the console. To aid
+Ethereum network via your own programs and not manually through the console. To aid
 this, `geth` has built-in support for a JSON-RPC based APIs ([standard APIs](https://ethereum.github.io/execution-apis/api-documentation/)
 and [`geth` specific APIs](https://geth.ethereum.org/docs/interacting-with-geth/rpc)).
 These can be exposed via HTTP, WebSockets and IPC (UNIX sockets on UNIX based
@@ -218,19 +186,19 @@ you'd expect.
 
 HTTP based JSON-RPC API options:
 
-* `--http` Enable the HTTP-RPC server
-* `--http.addr` HTTP-RPC server listening interface (default: `localhost`)
-* `--http.port` HTTP-RPC server listening port (default: `8545`)
-* `--http.api` API's offered over the HTTP-RPC interface (default: `eth,net,web3`)
-* `--http.corsdomain` Comma separated list of domains from which to accept cross origin requests (browser enforced)
-* `--ws` Enable the WS-RPC server
-* `--ws.addr` WS-RPC server listening interface (default: `localhost`)
-* `--ws.port` WS-RPC server listening port (default: `8546`)
-* `--ws.api` API's offered over the WS-RPC interface (default: `eth,net,web3`)
-* `--ws.origins` Origins from which to accept WebSocket requests
-* `--ipcdisable` Disable the IPC-RPC server
-* `--ipcapi` API's offered over the IPC-RPC interface (default: `admin,debug,eth,miner,net,personal,txpool,web3`)
-* `--ipcpath` Filename for IPC socket/pipe within the datadir (explicit paths escape it)
+  * `--http` Enable the HTTP-RPC server
+  * `--http.addr` HTTP-RPC server listening interface (default: `localhost`)
+  * `--http.port` HTTP-RPC server listening port (default: `8545`)
+  * `--http.api` API's offered over the HTTP-RPC interface (default: `eth,net,web3`)
+  * `--http.corsdomain` Comma separated list of domains from which to accept cross origin requests (browser enforced)
+  * `--ws` Enable the WS-RPC server
+  * `--ws.addr` WS-RPC server listening interface (default: `localhost`)
+  * `--ws.port` WS-RPC server listening port (default: `8546`)
+  * `--ws.api` API's offered over the WS-RPC interface (default: `eth,net,web3`)
+  * `--ws.origins` Origins from which to accept WebSocket requests
+  * `--ipcdisable` Disable the IPC-RPC server
+  * `--ipcapi` API's offered over the IPC-RPC interface (default: `admin,debug,eth,miner,net,personal,txpool,web3`)
+  * `--ipcpath` Filename for IPC socket/pipe within the datadir (explicit paths escape it)
 
 You'll need to use your own programming environments' capabilities (libraries, tools, etc) to
 connect via HTTP, WS or IPC to a `geth` node configured with the above flags and you'll
@@ -239,51 +207,131 @@ can reuse the same connection for multiple requests!
 
 **Note: Please understand the security implications of opening up an HTTP/WS based
 transport before doing so! Hackers on the internet are actively trying to subvert
-BSC nodes with exposed APIs! Further, all browser tabs can access locally
+Ethereum nodes with exposed APIs! Further, all browser tabs can access locally
 running web servers, so malicious web pages could try to subvert locally available
 APIs!**
 
 ### Operating a private network
-- [BSC-Deploy](https://github.com/bnb-chain/node-deploy/): deploy tool for setting up both BNB Beacon Chain, BNB Smart Chain and the cross chain infrastructure between them.
-- [BSC-Docker](https://github.com/bnb-chain/bsc-docker): deploy tool for setting up local BSC cluster in container.
 
+Maintaining your own private network is more involved as a lot of configurations taken for
+granted in the official networks need to be manually set up.
 
-## Running a bootnode
+#### Defining the private genesis state
 
-Bootnodes are super-lightweight nodes that are not behind a NAT and are running just discovery protocol. When you start up a node it should log your enode, which is a public identifier that others can use to connect to your node. 
+First, you'll need to create the genesis state of your networks, which all nodes need to be
+aware of and agree upon. This consists of a small JSON file (e.g. call it `genesis.json`):
 
-First the bootnode requires a key, which can be created with the following command, which will save a key to boot.key:
-
+```json
+{
+  "config": {
+    "chainId": <arbitrary positive integer>,
+    "homesteadBlock": 0,
+    "eip150Block": 0,
+    "eip155Block": 0,
+    "eip158Block": 0,
+    "byzantiumBlock": 0,
+    "constantinopleBlock": 0,
+    "petersburgBlock": 0,
+    "istanbulBlock": 0,
+    "berlinBlock": 0,
+    "londonBlock": 0
+  },
+  "alloc": {},
+  "coinbase": "0x0000000000000000000000000000000000000000",
+  "difficulty": "0x20000",
+  "extraData": "",
+  "gasLimit": "0x2fefd8",
+  "nonce": "0x0000000000000042",
+  "mixhash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "timestamp": "0x00"
+}
 ```
-bootnode -genkey boot.key
+
+The above fields should be fine for most purposes, although we'd recommend changing
+the `nonce` to some random value so you prevent unknown remote nodes from being able
+to connect to you. If you'd like to pre-fund some accounts for easier testing, create
+the accounts and populate the `alloc` field with their addresses.
+
+```json
+"alloc": {
+  "0x0000000000000000000000000000000000000001": {
+    "balance": "111111111"
+  },
+  "0x0000000000000000000000000000000000000002": {
+    "balance": "222222222"
+  }
+}
 ```
 
-This key can then be used to generate a bootnode as follows:
+With the genesis state defined in the above JSON file, you'll need to initialize **every**
+`geth` node with it prior to starting it up to ensure all blockchain parameters are correctly
+set:
 
-```
-bootnode -nodekey boot.key -addr :30311 -network bsc
+```shell
+$ geth init path/to/genesis.json
 ```
 
-The choice of port passed to -addr is arbitrary. 
-The bootnode command returns the following logs to the terminal, confirming that it is running:
+#### Creating the rendezvous point
 
+With all nodes that you want to run initialized to the desired genesis state, you'll need to
+start a bootstrap node that others can use to find each other in your network and/or over
+the internet. The clean way is to configure and run a dedicated bootnode:
+
+```shell
+$ bootnode --genkey=boot.key
+$ bootnode --nodekey=boot.key
 ```
-enode://3063d1c9e1b824cfbb7c7b6abafa34faec6bb4e7e06941d218d760acdd7963b274278c5c3e63914bd6d1b58504c59ec5522c56f883baceb8538674b92da48a96@127.0.0.1:0?discport=30311
-Note: you're using cmd/bootnode, a developer tool.
-We recommend using a regular node as bootstrap node for production deployments.
-INFO [08-21|11:11:30.687] New local node record                    seq=1,692,616,290,684 id=2c9af1742f8f85ce ip=<nil> udp=0 tcp=0
-INFO [08-21|12:11:30.753] New local node record                    seq=1,692,616,290,685 id=2c9af1742f8f85ce ip=54.217.128.118 udp=30311 tcp=0
-INFO [09-01|02:46:26.234] New local node record                    seq=1,692,616,290,686 id=2c9af1742f8f85ce ip=34.250.32.100  udp=30311 tcp=0
+
+With the bootnode online, it will display an [`enode` URL](https://ethereum.org/en/developers/docs/networking-layer/network-addresses/#enode)
+that other nodes can use to connect to it and exchange peer information. Make sure to
+replace the displayed IP address information (most probably `[::]`) with your externally
+accessible IP to get the actual `enode` URL.
+
+*Note: You could also use a full-fledged `geth` node as a bootnode, but it's the less
+recommended way.*
+
+#### Starting up your member nodes
+
+With the bootnode operational and externally reachable (you can try
+`telnet <ip> <port>` to ensure it's indeed reachable), start every subsequent `geth`
+node pointed to the bootnode for peer discovery via the `--bootnodes` flag. It will
+probably also be desirable to keep the data directory of your private network separated, so
+do also specify a custom `--datadir` flag.
+
+```shell
+$ geth --datadir=path/to/custom/data/folder --bootnodes=<bootnode-enode-url-from-above>
 ```
+
+*Note: Since your network will be completely cut off from the main and test networks, you'll
+also need to configure a miner to process transactions and create new blocks for you.*
+
+#### Running a private miner
+
+
+In a private network setting a single CPU miner instance is more than enough for
+practical purposes as it can produce a stable stream of blocks at the correct intervals
+without needing heavy resources (consider running on a single thread, no need for multiple
+ones either). To start a `geth` instance for mining, run it with all your usual flags, extended
+by:
+
+```shell
+$ geth <usual-flags> --mine --miner.threads=1 --miner.etherbase=0x0000000000000000000000000000000000000000
+```
+
+Which will start mining blocks and transactions on a single CPU thread, crediting all
+proceedings to the account specified by `--miner.etherbase`. You can further tune the mining
+by changing the default gas limit blocks converge to (`--miner.targetgaslimit`) and the price
+transactions are accepted at (`--miner.gasprice`).
 
 ## Contribution
 
 Thank you for considering helping out with the source code! We welcome contributions
 from anyone on the internet, and are grateful for even the smallest of fixes!
 
-If you'd like to contribute to bsc, please fork, fix, commit and send a pull request
+If you'd like to contribute to go-ethereum, please fork, fix, commit and send a pull request
 for the maintainers to review and merge into the main code base. If you wish to submit
-more complex changes though, please check up with the core devs first on [our discord channel](https://discord.gg/bnbchain)
+more complex changes though, please check up with the core devs first on [our Discord Server](https://discord.gg/invite/nthXNEv)
 to ensure those changes are in line with the general philosophy of the project and/or get
 some early feedback which can make both your efforts much lighter as well as our review
 and merge procedures quick and simple.
@@ -302,12 +350,18 @@ Please see the [Developers' Guide](https://geth.ethereum.org/docs/developers/get
 for more details on configuring your environment, managing project dependencies, and
 testing procedures.
 
+### Contributing to geth.ethereum.org
+
+For contributions to the [go-ethereum website](https://geth.ethereum.org), please checkout and raise pull requests against the `website` branch.
+For more detailed instructions please see the `website` branch [README](https://github.com/ethereum/go-ethereum/tree/website#readme) or the 
+[contributing](https://geth.ethereum.org/docs/developers/geth-developer/contributing) page of the website.
+
 ## License
 
-The bsc library (i.e. all code outside of the `cmd` directory) is licensed under the
+The go-ethereum library (i.e. all code outside of the `cmd` directory) is licensed under the
 [GNU Lesser General Public License v3.0](https://www.gnu.org/licenses/lgpl-3.0.en.html),
 also included in our repository in the `COPYING.LESSER` file.
 
-The bsc binaries (i.e. all code inside of the `cmd` directory) is licensed under the
+The go-ethereum binaries (i.e. all code inside of the `cmd` directory) are licensed under the
 [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.en.html), also
 included in our repository in the `COPYING` file.

@@ -17,6 +17,7 @@
 package snapshot
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -24,8 +25,6 @@ import (
 	"runtime"
 	"sync"
 	"time"
-
-	"github.com/ethereum/go-ethereum/common/gopool"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -302,7 +301,7 @@ func generateTrieRoot(db ethdb.KeyValueWriter, scheme string, it Iterator, accou
 				fullData []byte
 			)
 			if leafCallback == nil {
-				fullData, err = types.FullAccountRLP(it.(AccountIterator).Account())
+				fullData, err = FullAccountRLP(it.(AccountIterator).Account())
 				if err != nil {
 					return stop(err)
 				}
@@ -314,23 +313,22 @@ func generateTrieRoot(db ethdb.KeyValueWriter, scheme string, it Iterator, accou
 					return stop(err)
 				}
 				// Fetch the next account and process it concurrently
-				account, err := types.FullAccount(it.(AccountIterator).Account())
+				account, err := FullAccount(it.(AccountIterator).Account())
 				if err != nil {
 					return stop(err)
 				}
-				hash := it.Hash()
-				gopool.Submit(func() {
+				go func(hash common.Hash) {
 					subroot, err := leafCallback(db, hash, common.BytesToHash(account.CodeHash), stats)
 					if err != nil {
 						results <- err
 						return
 					}
-					if account.Root != subroot {
+					if !bytes.Equal(account.Root, subroot.Bytes()) {
 						results <- fmt.Errorf("invalid subroot(path %x), want %x, have %x", hash, account.Root, subroot)
 						return
 					}
 					results <- nil
-				})
+				}(it.Hash())
 				fullData, err = rlp.EncodeToBytes(account)
 				if err != nil {
 					return stop(err)

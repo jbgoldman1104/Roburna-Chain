@@ -27,13 +27,10 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/enr"
 	"github.com/ethereum/go-ethereum/p2p/netutil"
-	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/rlp"
 )
 
 func TestTable_pingReplace(t *testing.T) {
@@ -68,7 +65,7 @@ func testPingReplace(t *testing.T, newNodeIsResponding, lastInBucketIsResponding
 	// its bucket if it is unresponsive. Revalidate again to ensure that
 	transport.dead[last.ID()] = !lastInBucketIsResponding
 	transport.dead[pingSender.ID()] = !newNodeIsResponding
-	tab.addSeenNodeSync(pingSender)
+	tab.addSeenNode(pingSender)
 	tab.doRevalidate(make(chan struct{}, 1))
 	tab.doRevalidate(make(chan struct{}, 1))
 
@@ -151,7 +148,7 @@ func TestTable_IPLimit(t *testing.T) {
 
 	for i := 0; i < tableIPLimit+1; i++ {
 		n := nodeAtDistance(tab.self().ID(), i, net.IP{172, 0, 1, byte(i)})
-		tab.addSeenNodeSync(n)
+		tab.addSeenNode(n)
 	}
 	if tab.len() > tableIPLimit {
 		t.Errorf("too many nodes in table")
@@ -250,6 +247,41 @@ func TestTable_findnodeByID(t *testing.T) {
 	}
 }
 
+func TestTable_ReadRandomNodesGetAll(t *testing.T) {
+	cfg := &quick.Config{
+		MaxCount: 200,
+		Rand:     rand.New(rand.NewSource(time.Now().Unix())),
+		Values: func(args []reflect.Value, rand *rand.Rand) {
+			args[0] = reflect.ValueOf(make([]*enode.Node, rand.Intn(1000)))
+		},
+	}
+	test := func(buf []*enode.Node) bool {
+		transport := newPingRecorder()
+		tab, db := newTestTable(transport)
+		defer db.Close()
+		defer tab.close()
+		<-tab.initDone
+
+		for i := 0; i < len(buf); i++ {
+			ld := cfg.Rand.Intn(len(tab.buckets))
+			fillTable(tab, []*node{nodeAtDistance(tab.self().ID(), ld, intIP(ld))})
+		}
+		gotN := tab.ReadRandomNodes(buf)
+		if gotN != tab.len() {
+			t.Errorf("wrong number of nodes, got %d, want %d", gotN, tab.len())
+			return false
+		}
+		if hasDuplicates(wrapNodes(buf[:gotN])) {
+			t.Errorf("result contains duplicates")
+			return false
+		}
+		return true
+	}
+	if err := quick.Check(test, cfg); err != nil {
+		t.Error(err)
+	}
+}
+
 type closeTest struct {
 	Self   enode.ID
 	Target enode.ID
@@ -282,8 +314,8 @@ func TestTable_addVerifiedNode(t *testing.T) {
 	// Insert two nodes.
 	n1 := nodeAtDistance(tab.self().ID(), 256, net.IP{88, 77, 66, 1})
 	n2 := nodeAtDistance(tab.self().ID(), 256, net.IP{88, 77, 66, 2})
-	tab.addSeenNodeSync(n1)
-	tab.addSeenNodeSync(n2)
+	tab.addSeenNode(n1)
+	tab.addSeenNode(n2)
 
 	// Verify bucket content:
 	bcontent := []*node{n1, n2}
@@ -295,7 +327,7 @@ func TestTable_addVerifiedNode(t *testing.T) {
 	newrec := n2.Record()
 	newrec.Set(enr.IP{99, 99, 99, 99})
 	newn2 := wrapNode(enode.SignNull(newrec, n2.ID()))
-	tab.addVerifiedNodeSync(newn2)
+	tab.addVerifiedNode(newn2)
 
 	// Check that bucket is updated correctly.
 	newBcontent := []*node{newn2, n1}
@@ -314,8 +346,8 @@ func TestTable_addSeenNode(t *testing.T) {
 	// Insert two nodes.
 	n1 := nodeAtDistance(tab.self().ID(), 256, net.IP{88, 77, 66, 1})
 	n2 := nodeAtDistance(tab.self().ID(), 256, net.IP{88, 77, 66, 2})
-	tab.addSeenNodeSync(n1)
-	tab.addSeenNodeSync(n2)
+	tab.addSeenNode(n1)
+	tab.addSeenNode(n2)
 
 	// Verify bucket content:
 	bcontent := []*node{n1, n2}
@@ -327,7 +359,7 @@ func TestTable_addSeenNode(t *testing.T) {
 	newrec := n2.Record()
 	newrec.Set(enr.IP{99, 99, 99, 99})
 	newn2 := wrapNode(enode.SignNull(newrec, n2.ID()))
-	tab.addSeenNodeSync(newn2)
+	tab.addSeenNode(newn2)
 
 	// Check that bucket content is unchanged.
 	if !reflect.DeepEqual(tab.bucket(n1.ID()).entries, bcontent) {
@@ -350,7 +382,7 @@ func TestTable_revalidateSyncRecord(t *testing.T) {
 	r.Set(enr.IP(net.IP{127, 0, 0, 1}))
 	id := enode.ID{1}
 	n1 := wrapNode(enode.SignNull(&r, id))
-	tab.addSeenNodeSync(n1)
+	tab.addSeenNode(n1)
 
 	// Update the node record.
 	r.Set(enr.WithEntry("foo", "bar"))
@@ -364,39 +396,57 @@ func TestTable_revalidateSyncRecord(t *testing.T) {
 	}
 }
 
-// This test checks that ENR filtering is working properly
-func TestTable_filterNode(t *testing.T) {
-	// Create ENR filter
-	type eth struct {
-		ForkID forkid.ID
-		Tail   []rlp.RawValue `rlp:"tail"`
+func TestNodesPush(t *testing.T) {
+	var target enode.ID
+	n1 := nodeAtDistance(target, 255, intIP(1))
+	n2 := nodeAtDistance(target, 254, intIP(2))
+	n3 := nodeAtDistance(target, 253, intIP(3))
+	perm := [][]*node{
+		{n3, n2, n1},
+		{n3, n1, n2},
+		{n2, n3, n1},
+		{n2, n1, n3},
+		{n1, n3, n2},
+		{n1, n2, n3},
 	}
 
-	enrFilter, _ := ParseEthFilter("bsc")
-
-	// Check test ENR record
-	var r1 enr.Record
-	r1.Set(enr.WithEntry("foo", "bar"))
-	if enrFilter(&r1) {
-		t.Fatalf("filterNode doesn't work correctly for entry")
+	// Insert all permutations into lists with size limit 3.
+	for _, nodes := range perm {
+		list := nodesByDistance{target: target}
+		for _, n := range nodes {
+			list.push(n, 3)
+		}
+		if !slicesEqual(list.entries, perm[0], nodeIDEqual) {
+			t.Fatal("not equal")
+		}
 	}
-	t.Logf("Check test ENR record - passed")
 
-	// Check wrong genesis ENR record
-	var r2 enr.Record
-	r2.Set(enr.WithEntry("eth", eth{ForkID: forkid.NewID(params.BSCChainConfig, params.ChapelGenesisHash, uint64(0), uint64(0))}))
-	if enrFilter(&r2) {
-		t.Fatalf("filterNode doesn't work correctly for wrong genesis entry")
+	// Insert all permutations into lists with size limit 2.
+	for _, nodes := range perm {
+		list := nodesByDistance{target: target}
+		for _, n := range nodes {
+			list.push(n, 2)
+		}
+		if !slicesEqual(list.entries, perm[0][:2], nodeIDEqual) {
+			t.Fatal("not equal")
+		}
 	}
-	t.Logf("Check wrong genesis ENR record - passed")
+}
 
-	// Check correct genesis ENR record
-	var r3 enr.Record
-	r3.Set(enr.WithEntry("eth", eth{ForkID: forkid.NewID(params.BSCChainConfig, params.BSCGenesisHash, uint64(0), uint64(0))}))
-	if !enrFilter(&r3) {
-		t.Fatalf("filterNode doesn't work correctly for correct genesis entry")
+func nodeIDEqual(n1, n2 *node) bool {
+	return n1.ID() == n2.ID()
+}
+
+func slicesEqual[T any](s1, s2 []T, check func(e1, e2 T) bool) bool {
+	if len(s1) != len(s2) {
+		return false
 	}
-	t.Logf("Check correct genesis ENR record - passed")
+	for i := range s1 {
+		if !check(s1[i], s2[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // gen wraps quick.Value so it's easier to use.

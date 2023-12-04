@@ -23,7 +23,6 @@ import (
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
@@ -50,19 +49,6 @@ func (dl *diskLayer) Root() common.Hash {
 	return dl.root
 }
 
-func (dl *diskLayer) WaitAndGetVerifyRes() bool {
-	return true
-}
-
-func (dl *diskLayer) MarkValid() {}
-
-func (dl *diskLayer) Verified() bool {
-	return true
-}
-
-func (dl *diskLayer) CorrectAccounts(map[common.Hash][]byte) {
-}
-
 // Parent always returns nil as there's no layer below the disk.
 func (dl *diskLayer) Parent() snapshot {
 	return nil
@@ -77,15 +63,9 @@ func (dl *diskLayer) Stale() bool {
 	return dl.stale
 }
 
-// Accounts directly retrieves all accounts in current snapshot in
-// the snapshot slim data format.
-func (dl *diskLayer) Accounts() (map[common.Hash]*types.SlimAccount, error) {
-	return nil, nil
-}
-
 // Account directly retrieves the account associated with a particular hash in
 // the snapshot slim data format.
-func (dl *diskLayer) Account(hash common.Hash) (*types.SlimAccount, error) {
+func (dl *diskLayer) Account(hash common.Hash) (*Account, error) {
 	data, err := dl.AccountRLP(hash)
 	if err != nil {
 		return nil, err
@@ -93,7 +73,7 @@ func (dl *diskLayer) Account(hash common.Hash) (*types.SlimAccount, error) {
 	if len(data) == 0 { // can be both nil and []byte{}
 		return nil, nil
 	}
-	account := new(types.SlimAccount)
+	account := new(Account)
 	if err := rlp.DecodeBytes(data, account); err != nil {
 		panic(err)
 	}
@@ -181,6 +161,6 @@ func (dl *diskLayer) Storage(accountHash, storageHash common.Hash) ([]byte, erro
 // Update creates a new layer on top of the existing snapshot diff tree with
 // the specified data items. Note, the maps are retained by the method to avoid
 // copying everything.
-func (dl *diskLayer) Update(blockHash common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storage map[common.Hash]map[common.Hash][]byte, verified chan struct{}) *diffLayer {
-	return newDiffLayer(dl, blockHash, destructs, accounts, storage, verified)
+func (dl *diskLayer) Update(blockHash common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storage map[common.Hash]map[common.Hash][]byte) *diffLayer {
+	return newDiffLayer(dl, blockHash, destructs, accounts, storage)
 }

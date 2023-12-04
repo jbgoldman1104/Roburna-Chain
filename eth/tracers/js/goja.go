@@ -86,10 +86,10 @@ func fromBuf(vm *goja.Runtime, bufType goja.Value, buf goja.Value, allowString b
 		if !obj.Get("constructor").SameAs(bufType) {
 			break
 		}
-		b := obj.Export().([]byte)
+		b := obj.Get("buffer").Export().(goja.ArrayBuffer).Bytes()
 		return b, nil
 	}
-	return nil, errors.New("invalid buffer type")
+	return nil, fmt.Errorf("invalid buffer type")
 }
 
 // jsTracer is an implementation of the Tracer interface which evaluates
@@ -221,8 +221,6 @@ func (t *jsTracer) CaptureTxStart(gasLimit uint64) {
 func (t *jsTracer) CaptureTxEnd(restGas uint64) {
 	t.ctx["gasUsed"] = t.vm.ToValue(t.gasLimit - restGas)
 }
-
-func (t *jsTracer) CaptureSystemTxEnd(intrinsicGas uint64) {}
 
 // CaptureStart implements the Tracer interface to initialize the tracing operation.
 func (t *jsTracer) CaptureStart(env *vm.EVM, from common.Address, to common.Address, create bool, input []byte, gas uint64, value *big.Int) {

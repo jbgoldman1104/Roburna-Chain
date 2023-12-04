@@ -18,7 +18,6 @@ package ethtest
 
 import (
 	"crypto/ecdsa"
-	"errors"
 	"fmt"
 	"time"
 
@@ -86,11 +85,6 @@ type Status eth.StatusPacket
 
 func (msg Status) Code() int     { return 16 }
 func (msg Status) ReqID() uint64 { return 0 }
-
-type UpgradeStatus eth.UpgradeStatusPacket
-
-func (msg UpgradeStatus) Code() int     { return 27 } // p2p.baseProtocolLength + eth.UpgradeStatusMsg
-func (msg UpgradeStatus) ReqID() uint64 { return 0 }
 
 // NewBlockHashes is the network packet for the block announcements.
 type NewBlockHashes eth.NewBlockHashesPacket
@@ -184,8 +178,6 @@ func (c *Conn) Read() Message {
 		msg = new(Disconnect)
 	case (Status{}).Code():
 		msg = new(Status)
-	case (UpgradeStatus{}).Code():
-		msg = new(UpgradeStatus)
 	case (GetBlockHeaders{}).Code():
 		ethMsg := new(eth.GetBlockHeadersPacket66)
 		if err := rlp.DecodeBytes(rawData, ethMsg); err != nil {
@@ -294,5 +286,5 @@ func (c *Conn) ReadSnap(id uint64) (Message, error) {
 		}
 		return snpMsg.(Message), nil
 	}
-	return nil, errors.New("request timed out")
+	return nil, fmt.Errorf("request timed out")
 }

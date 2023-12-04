@@ -17,11 +17,8 @@
 package core
 
 import (
-	"errors"
 	"fmt"
-	"time"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -29,40 +26,23 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 )
 
-const badBlockCacheExpire = 30 * time.Second
-
-type BlockValidatorOption func(*BlockValidator) *BlockValidator
-
-func EnableRemoteVerifyManager(remoteValidator *remoteVerifyManager) BlockValidatorOption {
-	return func(bv *BlockValidator) *BlockValidator {
-		bv.remoteValidator = remoteValidator
-		return bv
-	}
-}
-
 // BlockValidator is responsible for validating block headers, uncles and
 // processed state.
 //
 // BlockValidator implements Validator.
 type BlockValidator struct {
-	config          *params.ChainConfig // Chain configuration options
-	bc              *BlockChain         // Canonical block chain
-	engine          consensus.Engine    // Consensus engine used for validating
-	remoteValidator *remoteVerifyManager
+	config *params.ChainConfig // Chain configuration options
+	bc     *BlockChain         // Canonical block chain
+	engine consensus.Engine    // Consensus engine used for validating
 }
 
 // NewBlockValidator returns a new block validator which is safe for re-use
-func NewBlockValidator(config *params.ChainConfig, blockchain *BlockChain, engine consensus.Engine, opts ...BlockValidatorOption) *BlockValidator {
+func NewBlockValidator(config *params.ChainConfig, blockchain *BlockChain, engine consensus.Engine) *BlockValidator {
 	validator := &BlockValidator{
 		config: config,
 		engine: engine,
 		bc:     blockchain,
 	}
-
-	for _, opt := range opts {
-		validator = opt(validator)
-	}
-
 	return validator
 }
 
@@ -74,9 +54,7 @@ func (v *BlockValidator) ValidateBody(block *types.Block) error {
 	if v.bc.HasBlockAndState(block.Hash(), block.NumberU64()) {
 		return ErrKnownBlock
 	}
-	if v.bc.isCachedBadBlock(block) {
-		return ErrKnownBadBlock
-	}
+
 	// Header validity is known at this point. Here we verify that uncles, transactions
 	// and withdrawals given in the block body match the header.
 	header := block.Header()
@@ -86,75 +64,28 @@ func (v *BlockValidator) ValidateBody(block *types.Block) error {
 	if hash := types.CalcUncleHash(block.Uncles()); hash != header.UncleHash {
 		return fmt.Errorf("uncle root hash mismatch (header value %x, calculated %x)", header.UncleHash, hash)
 	}
-
-	validateFuns := []func() error{
-		func() error {
-			if hash := types.DeriveSha(block.Transactions(), trie.NewStackTrie(nil)); hash != header.TxHash {
-				return fmt.Errorf("transaction root hash mismatch: have %x, want %x", hash, header.TxHash)
-			}
-			return nil
-		},
-		func() error {
-			// Withdrawals are present after the Shanghai fork.
-			if header.WithdrawalsHash != nil {
-				// Withdrawals list must be present in body after Shanghai.
-				if block.Withdrawals() == nil {
-					return errors.New("missing withdrawals in block body")
-				}
-				if hash := types.DeriveSha(block.Withdrawals(), trie.NewStackTrie(nil)); hash != *header.WithdrawalsHash {
-					return fmt.Errorf("withdrawals root hash mismatch (header value %x, calculated %x)", *header.WithdrawalsHash, hash)
-				}
-			} else if block.Withdrawals() != nil {
-				// Withdrawals are not allowed prior to shanghai fork
-				return errors.New("withdrawals present in block body")
-			}
-			// Blob transactions may be present after the Cancun fork.
-			var blobs int
-			for _, tx := range block.Transactions() {
-				// Count the number of blobs to validate against the header's blobGasUsed
-				blobs += len(tx.BlobHashes())
-				// The individual checks for blob validity (version-check + not empty)
-				// happens in the state_transition check.
-			}
-			if header.BlobGasUsed != nil {
-				if want := *header.BlobGasUsed / params.BlobTxBlobGasPerBlob; uint64(blobs) != want { // div because the header is surely good vs the body might be bloated
-					return fmt.Errorf("blob gas used mismatch (header %v, calculated %v)", *header.BlobGasUsed, blobs*params.BlobTxBlobGasPerBlob)
-				}
-			} else {
-				if blobs > 0 {
-					return errors.New("data blobs present in block body")
-				}
-			}
-			return nil
-		},
-		func() error {
-			if !v.bc.HasBlockAndState(block.ParentHash(), block.NumberU64()-1) {
-				if !v.bc.HasBlock(block.ParentHash(), block.NumberU64()-1) {
-					return consensus.ErrUnknownAncestor
-				}
-				return consensus.ErrPrunedAncestor
-			}
-			return nil
-		},
-		func() error {
-			if v.remoteValidator != nil && !v.remoteValidator.AncestorVerified(block.Header()) {
-				return fmt.Errorf("%w, number: %s, hash: %s", ErrAncestorHasNotBeenVerified, block.Number(), block.Hash())
-			}
-			return nil
-		},
+	if hash := types.DeriveSha(block.Transactions(), trie.NewStackTrie(nil)); hash != header.TxHash {
+		return fmt.Errorf("transaction root hash mismatch (header value %x, calculated %x)", header.TxHash, hash)
 	}
-	validateRes := make(chan error, len(validateFuns))
-	for _, f := range validateFuns {
-		tmpFunc := f
-		go func() {
-			validateRes <- tmpFunc()
-		}()
-	}
-	for i := 0; i < len(validateFuns); i++ {
-		r := <-validateRes
-		if r != nil {
-			return r
+	// Withdrawals are present after the Shanghai fork.
+	if header.WithdrawalsHash != nil {
+		// Withdrawals list must be present in body after Shanghai.
+		if block.Withdrawals() == nil {
+			return fmt.Errorf("missing withdrawals in block body")
 		}
+		if hash := types.DeriveSha(block.Withdrawals(), trie.NewStackTrie(nil)); hash != *header.WithdrawalsHash {
+			return fmt.Errorf("withdrawals root hash mismatch (header value %x, calculated %x)", *header.WithdrawalsHash, hash)
+		}
+	} else if block.Withdrawals() != nil {
+		// Withdrawals are not allowed prior to shanghai fork
+		return fmt.Errorf("withdrawals present in block body")
+	}
+
+	if !v.bc.HasBlockAndState(block.ParentHash(), block.NumberU64()-1) {
+		if !v.bc.HasBlock(block.ParentHash(), block.NumberU64()-1) {
+			return consensus.ErrUnknownAncestor
+		}
+		return consensus.ErrPrunedAncestor
 	}
 	return nil
 }
@@ -168,59 +99,21 @@ func (v *BlockValidator) ValidateState(block *types.Block, statedb *state.StateD
 	}
 	// Validate the received block's bloom with the one derived from the generated receipts.
 	// For valid blocks this should always validate to true.
-	validateFuns := []func() error{
-		func() error {
-			rbloom := types.CreateBloom(receipts)
-			if rbloom != header.Bloom {
-				return fmt.Errorf("invalid bloom (remote: %x  local: %x)", header.Bloom, rbloom)
-			}
-			return nil
-		},
-		func() error {
-			receiptSha := types.DeriveSha(receipts, trie.NewStackTrie(nil))
-			if receiptSha != header.ReceiptHash {
-				return fmt.Errorf("invalid receipt root hash (remote: %x local: %x)", header.ReceiptHash, receiptSha)
-			}
-			return nil
-		},
+	rbloom := types.CreateBloom(receipts)
+	if rbloom != header.Bloom {
+		return fmt.Errorf("invalid bloom (remote: %x  local: %x)", header.Bloom, rbloom)
 	}
-	if statedb.IsPipeCommit() {
-		validateFuns = append(validateFuns, func() error {
-			if err := statedb.WaitPipeVerification(); err != nil {
-				return err
-			}
-			statedb.CorrectAccountsRoot(common.Hash{})
-			statedb.Finalise(v.config.IsEIP158(header.Number))
-			return nil
-		})
-	} else {
-		validateFuns = append(validateFuns, func() error {
-			if root := statedb.IntermediateRoot(v.config.IsEIP158(header.Number)); header.Root != root {
-				return fmt.Errorf("invalid merkle root (remote: %x local: %x) dberr: %w", header.Root, root, statedb.Error())
-			}
-			return nil
-		})
+	// Tre receipt Trie's root (R = (Tr [[H1, R1], ... [Hn, Rn]]))
+	receiptSha := types.DeriveSha(receipts, trie.NewStackTrie(nil))
+	if receiptSha != header.ReceiptHash {
+		return fmt.Errorf("invalid receipt root hash (remote: %x local: %x)", header.ReceiptHash, receiptSha)
 	}
-	validateRes := make(chan error, len(validateFuns))
-	for _, f := range validateFuns {
-		tmpFunc := f
-		go func() {
-			validateRes <- tmpFunc()
-		}()
+	// Validate the state root against the received state root and throw
+	// an error if they don't match.
+	if root := statedb.IntermediateRoot(v.config.IsEIP158(header.Number)); header.Root != root {
+		return fmt.Errorf("invalid merkle root (remote: %x local: %x) dberr: %w", header.Root, root, statedb.Error())
 	}
-
-	var err error
-	for i := 0; i < len(validateFuns); i++ {
-		r := <-validateRes
-		if r != nil && err == nil {
-			err = r
-		}
-	}
-	return err
-}
-
-func (v *BlockValidator) RemoteVerifyManager() *remoteVerifyManager {
-	return v.remoteValidator
+	return nil
 }
 
 // CalcGasLimit computes the gas limit of the next block after parent. It aims

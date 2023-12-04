@@ -17,11 +17,14 @@
 package eth
 
 import (
+	"errors"
 	"math/big"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/log"
@@ -34,25 +37,28 @@ const (
 
 // syncTransactions starts sending all currently pending transactions to the given peer.
 func (h *handler) syncTransactions(p *eth.Peer) {
-	var hashes []common.Hash
-	for _, batch := range h.txpool.Pending(false) {
-		for _, tx := range batch {
-			hashes = append(hashes, tx.Hash)
-		}
+	// Assemble the set of transaction to broadcast or announce to the remote
+	// peer. Fun fact, this is quite an expensive operation as it needs to sort
+	// the transactions if the sorting is not cached yet. However, with a random
+	// order, insertions could overflow the non-executable queues and get dropped.
+	//
+	// TODO(karalabe): Figure out if we could get away with random order somehow
+	var txs types.Transactions
+	pending := h.txpool.Pending(false)
+	for _, batch := range pending {
+		txs = append(txs, batch...)
 	}
-	if len(hashes) == 0 {
+	if len(txs) == 0 {
 		return
+	}
+	// The eth/65 protocol introduces proper transaction announcements, so instead
+	// of dripping transactions across multiple peers, just send the entire list as
+	// an announcement and let the remote side decide what they need (likely nothing).
+	hashes := make([]common.Hash, len(txs))
+	for i, tx := range txs {
+		hashes[i] = tx.Hash()
 	}
 	p.AsyncSendPooledTransactionHashes(hashes)
-}
-
-// syncVotes starts sending all currently pending votes to the given peer.
-func (h *handler) syncVotes(p *bscPeer) {
-	votes := h.votepool.GetVotes()
-	if len(votes) == 0 {
-		return
-	}
-	p.AsyncSendVotes(votes)
 }
 
 // chainSyncer coordinates blockchain sync components.
@@ -84,7 +90,7 @@ func newChainSyncer(handler *handler) *chainSyncer {
 // handlePeerEvent notifies the syncer about a change in the peer set.
 // This is called for new peers and every time a peer announces a new
 // chain head.
-func (cs *chainSyncer) handlePeerEvent() bool {
+func (cs *chainSyncer) handlePeerEvent(peer *eth.Peer) bool {
 	select {
 	case cs.peerEventCh <- struct{}{}:
 		return true
@@ -115,10 +121,18 @@ func (cs *chainSyncer) loop() {
 		select {
 		case <-cs.peerEventCh:
 			// Peer information changed, recheck.
-		case <-cs.doneCh:
+		case err := <-cs.doneCh:
 			cs.doneCh = nil
 			cs.force.Reset(forceSyncCycle)
 			cs.forced = false
+
+			// If we've reached the merge transition but no beacon client is available, or
+			// it has not yet switched us over, keep warning the user that their infra is
+			// potentially flaky.
+			if errors.Is(err, downloader.ErrMergeTransition) && time.Since(cs.warned) > 10*time.Second {
+				log.Warn("Local chain is post-merge, waiting for beacon client sync switch-over...")
+				cs.warned = time.Now()
+			}
 		case <-cs.force.C:
 			cs.forced = true
 
@@ -131,8 +145,6 @@ func (cs *chainSyncer) loop() {
 			if cs.doneCh != nil {
 				<-cs.doneCh
 			}
-			return
-		case <-cs.handler.stopCh:
 			return
 		}
 	}
@@ -193,7 +205,7 @@ func peerToSyncOp(mode downloader.SyncMode, p *eth.Peer) *chainSyncOp {
 
 func (cs *chainSyncer) modeAndLocalHead() (downloader.SyncMode, *big.Int) {
 	// If we're in snap sync mode, return that directly
-	if cs.handler.snapSync.Load() {
+	if atomic.LoadUint32(&cs.handler.snapSync) == 1 {
 		block := cs.handler.chain.CurrentSnapBlock()
 		td := cs.handler.chain.GetTd(block.Hash(), block.Number.Uint64())
 		return downloader.SnapSync, td
@@ -202,15 +214,11 @@ func (cs *chainSyncer) modeAndLocalHead() (downloader.SyncMode, *big.Int) {
 	// snap sync pivot, check if we should reenable
 	if pivot := rawdb.ReadLastPivotNumber(cs.handler.database); pivot != nil {
 		if head := cs.handler.chain.CurrentBlock(); head.Number.Uint64() < *pivot {
-			if rawdb.ReadAncientType(cs.handler.database) == rawdb.PruneFreezerType {
-				log.Crit("Current rewound to before the fast sync pivot, can't enable pruneancient mode", "current block number", head.Number.Uint64(), "pivot", *pivot)
-			}
 			block := cs.handler.chain.CurrentSnapBlock()
 			td := cs.handler.chain.GetTd(block.Hash(), block.Number.Uint64())
 			return downloader.SnapSync, td
 		}
 	}
-
 	// Nope, we're really full syncing
 	head := cs.handler.chain.CurrentBlock()
 	td := cs.handler.chain.GetTd(head.Hash(), head.Number.Uint64())
@@ -248,15 +256,20 @@ func (h *handler) doSync(op *chainSyncOp) error {
 	if err != nil {
 		return err
 	}
-	if h.snapSync.Load() {
+	if atomic.LoadUint32(&h.snapSync) == 1 {
 		log.Info("Snap sync complete, auto disabling")
-		h.snapSync.Store(false)
+		atomic.StoreUint32(&h.snapSync, 0)
 	}
-	// If we've successfully finished a sync cycle, enable accepting transactions
-	// from the network.
-	h.acceptTxs.Store(true)
-
+	// If we've successfully finished a sync cycle and passed any required checkpoint,
+	// enable accepting transactions from the network.
 	head := h.chain.CurrentBlock()
+	if head.Number.Uint64() >= h.checkpointNumber {
+		// Checkpoint passed, sanity check the timestamp to have a fallback mechanism
+		// for non-checkpointed (number = 0) private networks.
+		if head.Time >= uint64(time.Now().AddDate(0, -1, 0).Unix()) {
+			atomic.StoreUint32(&h.acceptTxs, 1)
+		}
+	}
 	if head.Number.Uint64() > 0 {
 		// We've completed a sync cycle, notify all peers of new state. This path is
 		// essential in star-topology networks where a gateway node needs to notify

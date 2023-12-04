@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -52,31 +53,13 @@ func (bc *BlockChain) CurrentSnapBlock() *types.Header {
 // CurrentFinalBlock retrieves the current finalized block of the canonical
 // chain. The block is retrieved from the blockchain's internal cache.
 func (bc *BlockChain) CurrentFinalBlock() *types.Header {
-	if p, ok := bc.engine.(consensus.PoSA); ok {
-		currentHeader := bc.CurrentHeader()
-		if currentHeader == nil {
-			return nil
-		}
-		return p.GetFinalizedHeader(bc, currentHeader)
-	}
-
-	return nil
+	return bc.currentFinalBlock.Load()
 }
 
 // CurrentSafeBlock retrieves the current safe block of the canonical
 // chain. The block is retrieved from the blockchain's internal cache.
 func (bc *BlockChain) CurrentSafeBlock() *types.Header {
-	if p, ok := bc.engine.(consensus.PoSA); ok {
-		currentHeader := bc.CurrentHeader()
-		if currentHeader == nil {
-			return nil
-		}
-		_, justifiedBlockHash, err := p.GetJustifiedNumberAndHash(bc, currentHeader)
-		if err == nil {
-			return bc.GetHeaderByHash(justifiedBlockHash)
-		}
-	}
-	return nil
+	return bc.currentSafeBlock.Load()
 }
 
 // HasHeader checks if a block header is present in the database or not, caching
@@ -234,11 +217,7 @@ func (bc *BlockChain) GetReceiptsByHash(hash common.Hash) types.Receipts {
 	if number == nil {
 		return nil
 	}
-	header := bc.GetHeader(hash, *number)
-	if header == nil {
-		return nil
-	}
-	receipts := rawdb.ReadReceipts(bc.db, hash, *number, header.Time, bc.chainConfig)
+	receipts := rawdb.ReadReceipts(bc.db, hash, *number, bc.chainConfig)
 	if receipts == nil {
 		return nil
 	}
@@ -295,15 +274,6 @@ func (bc *BlockChain) GetTd(hash common.Hash, number uint64) *big.Int {
 
 // HasState checks if state trie is fully present in the database or not.
 func (bc *BlockChain) HasState(hash common.Hash) bool {
-	if bc.stateCache.NoTries() {
-		return bc.snaps != nil && bc.snaps.Snapshot(hash) != nil
-	}
-	if bc.pipeCommit && bc.snaps != nil {
-		// If parent snap is pending on verification, treat it as state exist
-		if s := bc.snaps.Snapshot(hash); s != nil && !s.Verified() {
-			return true
-		}
-	}
 	_, err := bc.stateCache.OpenTrie(hash)
 	return err == nil
 }
@@ -319,16 +289,16 @@ func (bc *BlockChain) HasBlockAndState(hash common.Hash, number uint64) bool {
 	return bc.HasState(block.Root())
 }
 
-// stateRecoverable checks if the specified state is recoverable.
-// Note, this function assumes the state is not present, because
-// state is not treated as recoverable if it's available, thus
-// false will be returned in this case.
-func (bc *BlockChain) stateRecoverable(root common.Hash) bool {
-	if bc.triedb.Scheme() == rawdb.HashScheme {
-		return false
-	}
-	result, _ := bc.triedb.Recoverable(root)
-	return result
+// TrieNode retrieves a blob of data associated with a trie node
+// either from ephemeral in-memory cache, or from persistent storage.
+func (bc *BlockChain) TrieNode(hash common.Hash) ([]byte, error) {
+	return bc.stateCache.TrieDB().Node(hash)
+}
+
+// ContractCode retrieves a blob of data associated with a contract hash
+// either from ephemeral in-memory cache, or from persistent storage.
+func (bc *BlockChain) ContractCode(hash common.Hash) ([]byte, error) {
+	return bc.stateCache.ContractCode(common.Hash{}, hash)
 }
 
 // ContractCodeWithPrefix retrieves a blob of data associated with a contract
@@ -338,11 +308,9 @@ func (bc *BlockChain) stateRecoverable(root common.Hash) bool {
 // new code scheme.
 func (bc *BlockChain) ContractCodeWithPrefix(hash common.Hash) ([]byte, error) {
 	type codeReader interface {
-		ContractCodeWithPrefix(address common.Address, codeHash common.Hash) ([]byte, error)
+		ContractCodeWithPrefix(addrHash, codeHash common.Hash) ([]byte, error)
 	}
-	// TODO(rjl493456442) The associated account address is also required
-	// in Verkle scheme. Fix it once snap-sync is supported for Verkle.
-	return bc.stateCache.(codeReader).ContractCodeWithPrefix(common.Address{}, hash)
+	return bc.stateCache.(codeReader).ContractCodeWithPrefix(common.Hash{}, hash)
 }
 
 // State returns a new mutable state based on the current HEAD block.
@@ -391,6 +359,11 @@ func (bc *BlockChain) Genesis() *types.Block {
 	return bc.genesisBlock
 }
 
+// GetVMConfig returns the block chain VM config.
+func (bc *BlockChain) GetVMConfig() *vm.Config {
+	return &bc.vmConfig
+}
+
 // SetTxLookupLimit is responsible for updating the txlookup limit to the
 // original one stored in db if the new mismatches with the old one.
 func (bc *BlockChain) SetTxLookupLimit(limit uint64) {
@@ -423,11 +396,6 @@ func (bc *BlockChain) SubscribeChainHeadEvent(ch chan<- ChainHeadEvent) event.Su
 	return bc.scope.Track(bc.chainHeadFeed.Subscribe(ch))
 }
 
-// SubscribeChainBlockEvent registers a subscription of ChainBlockEvent.
-func (bc *BlockChain) SubscribeChainBlockEvent(ch chan<- ChainHeadEvent) event.Subscription {
-	return bc.scope.Track(bc.chainBlockFeed.Subscribe(ch))
-}
-
 // SubscribeChainSideEvent registers a subscription of ChainSideEvent.
 func (bc *BlockChain) SubscribeChainSideEvent(ch chan<- ChainSideEvent) event.Subscription {
 	return bc.scope.Track(bc.chainSideFeed.Subscribe(ch))
@@ -442,9 +410,4 @@ func (bc *BlockChain) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscript
 // block processing has started while false means it has stopped.
 func (bc *BlockChain) SubscribeBlockProcessingEvent(ch chan<- bool) event.Subscription {
 	return bc.scope.Track(bc.blockProcFeed.Subscribe(ch))
-}
-
-// SubscribeFinalizedHeaderEvent registers a subscription of FinalizedHeaderEvent.
-func (bc *BlockChain) SubscribeFinalizedHeaderEvent(ch chan<- FinalizedHeaderEvent) event.Subscription {
-	return bc.scope.Track(bc.finalizedHeaderFeed.Subscribe(ch))
 }

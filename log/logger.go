@@ -289,15 +289,3 @@ func (c Ctx) toArray() []interface{} {
 
 	return arr
 }
-
-func NewFileLvlHandler(logPath string, maxBytesSize uint, level string, rotateHours int) Handler {
-	rfh, err := RotatingFileHandler(logPath, maxBytesSize, LogfmtFormat(), rotateHours)
-	if err != nil {
-		panic(err)
-	}
-	logLevel, err := LvlFromString(level)
-	if err != nil {
-		panic(err)
-	}
-	return LvlFilterHandler(logLevel, rfh)
-}

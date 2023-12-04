@@ -18,7 +18,6 @@ package gasprice
 
 import (
 	"context"
-	"errors"
 	"math"
 	"math/big"
 	"testing"
@@ -50,18 +49,10 @@ func (b *testBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber
 		number = 0
 	}
 	if number == rpc.FinalizedBlockNumber {
-		header := b.chain.CurrentFinalBlock()
-		if header == nil {
-			return nil, errors.New("finalized block not found")
-		}
-		number = rpc.BlockNumber(header.Number.Uint64())
+		return b.chain.CurrentFinalBlock(), nil
 	}
 	if number == rpc.SafeBlockNumber {
-		header := b.chain.CurrentSafeBlock()
-		if header == nil {
-			return nil, errors.New("safe block not found")
-		}
-		number = rpc.BlockNumber(header.Number.Uint64())
+		return b.chain.CurrentSafeBlock(), nil
 	}
 	if number == rpc.LatestBlockNumber {
 		number = testHead
@@ -142,10 +133,6 @@ func newTestBackend(t *testing.T, londonBlock *big.Int, pending bool) *testBacke
 	config.LondonBlock = londonBlock
 	config.ArrowGlacierBlock = londonBlock
 	config.GrayGlacierBlock = londonBlock
-	config.GibbsBlock = nil
-	config.LubanBlock = nil
-	config.PlatoBlock = nil
-	config.HertzBlock = nil
 	config.TerminalTotalDifficulty = common.Big0
 	engine := ethash.NewFaker()
 
@@ -181,10 +168,9 @@ func newTestBackend(t *testing.T, londonBlock *big.Int, pending bool) *testBacke
 	if err != nil {
 		t.Fatalf("Failed to create local chain, %v", err)
 	}
-	_, err = chain.InsertChain(blocks)
-	if err != nil {
-		t.Fatalf("Failed to insert blocks, %v", err)
-	}
+	chain.InsertChain(blocks)
+	chain.SetFinalized(chain.GetBlockByNumber(25).Header())
+	chain.SetSafe(chain.GetBlockByNumber(25).Header())
 	return &testBackend{chain: chain, pending: pending}
 }
 

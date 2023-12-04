@@ -17,6 +17,7 @@
 package downloader
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -60,7 +61,7 @@ func newTester(t *testing.T) *downloadTester {
 // newTester creates a new downloader test mocker.
 func newTesterWithNotification(t *testing.T, success func()) *downloadTester {
 	freezer := t.TempDir()
-	db, err := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), freezer, "", false, false, false, false)
+	db, err := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), freezer, "", false)
 	if err != nil {
 		panic(err)
 	}
@@ -81,7 +82,7 @@ func newTesterWithNotification(t *testing.T, success func()) *downloadTester {
 		chain:   chain,
 		peers:   make(map[string]*downloadTesterPeer),
 	}
-	tester.downloader = New(db, new(event.TypeMux), tester.chain, nil, tester.dropPeer)
+	tester.downloader = New(0, db, new(event.TypeMux), tester.chain, nil, tester.dropPeer, success)
 	return tester
 }
 
@@ -151,9 +152,6 @@ type downloadTesterPeer struct {
 	chain *core.BlockChain
 
 	withholdHeaders map[common.Hash]struct{}
-}
-
-func (dlp *downloadTesterPeer) MarkLagging() {
 }
 
 // Head constructs a function to retrieve a peer's current head hash
@@ -480,7 +478,7 @@ func testThrottling(t *testing.T, protocol uint, mode SyncMode) {
 	// Wrap the importer to allow stepping
 	var blocked atomic.Uint32
 	proceed := make(chan struct{})
-	tester.downloader.chainInsertHook = func(results []*fetchResult, _ chan struct{}) {
+	tester.downloader.chainInsertHook = func(results []*fetchResult) {
 		blocked.Store(uint32(len(results)))
 		<-proceed
 	}
@@ -988,8 +986,8 @@ func testHighTDStarvationAttack(t *testing.T, protocol uint, mode SyncMode) {
 
 	chain := testChainBase.shorten(1)
 	tester.newPeer("attack", protocol, chain.blocks[1:])
-	if err := tester.sync("attack", big.NewInt(1000000), mode); err != errLaggingPeer {
-		t.Fatalf("synchronisation error mismatch: have %v, want %v", err, errLaggingPeer)
+	if err := tester.sync("attack", big.NewInt(1000000), mode); err != errStallingPeer {
+		t.Fatalf("synchronisation error mismatch: have %v, want %v", err, errStallingPeer)
 	}
 }
 
@@ -1310,26 +1308,9 @@ func testFakedSyncProgress(t *testing.T, protocol uint, mode SyncMode) {
 	pending.Wait()
 	afterFailedSync := tester.downloader.Progress()
 
-	// it is no longer valid to sync to a lagging peer
-	laggingChain := chain.shorten(800 / 2)
-	tester.newPeer("lagging", protocol, laggingChain.blocks[1:])
-	pending.Add(1)
-	go func() {
-		defer pending.Done()
-		if err := tester.sync("lagging", nil, mode); err != errLaggingPeer {
-			panic(fmt.Sprintf("unexpected lagging synchronisation err:%v", err))
-		}
-	}()
-	// lagging peer will return before syncInitHook, skip <-starting and progress <- struct{}{}
-	checkProgress(t, tester.downloader, "lagging", ethereum.SyncProgress{
-		CurrentBlock: afterFailedSync.CurrentBlock,
-		HighestBlock: uint64(len(chain.blocks) - 1),
-	})
-	pending.Wait()
-
-	// Synchronise with a good peer and check that the progress height has been increased to
+	// Synchronise with a good peer and check that the progress height has been reduced to
 	// the true value.
-	validChain := chain.shorten(len(chain.blocks))
+	validChain := chain.shorten(len(chain.blocks) - numMissing)
 	tester.newPeer("valid", protocol, validChain.blocks[1:])
 	pending.Add(1)
 
@@ -1428,7 +1409,44 @@ func TestRemoteHeaderRequestSpan(t *testing.T) {
 	}
 }
 
-/*
+// Tests that peers below a pre-configured checkpoint block are prevented from
+// being fast-synced from, avoiding potential cheap eclipse attacks.
+func TestCheckpointEnforcement66Full(t *testing.T) { testCheckpointEnforcement(t, eth.ETH66, FullSync) }
+func TestCheckpointEnforcement66Snap(t *testing.T) { testCheckpointEnforcement(t, eth.ETH66, SnapSync) }
+func TestCheckpointEnforcement66Light(t *testing.T) {
+	testCheckpointEnforcement(t, eth.ETH66, LightSync)
+}
+func TestCheckpointEnforcement67Full(t *testing.T) { testCheckpointEnforcement(t, eth.ETH67, FullSync) }
+func TestCheckpointEnforcement67Snap(t *testing.T) { testCheckpointEnforcement(t, eth.ETH67, SnapSync) }
+func TestCheckpointEnforcement67Light(t *testing.T) {
+	testCheckpointEnforcement(t, eth.ETH67, LightSync)
+}
+
+func testCheckpointEnforcement(t *testing.T, protocol uint, mode SyncMode) {
+	// Create a new tester with a particular hard coded checkpoint block
+	tester := newTester(t)
+	defer tester.terminate()
+
+	tester.downloader.checkpoint = uint64(fsMinFullBlocks) + 256
+	chain := testChainBase.shorten(int(tester.downloader.checkpoint) - 1)
+
+	// Attempt to sync with the peer and validate the result
+	tester.newPeer("peer", protocol, chain.blocks[1:])
+
+	var expect error
+	if mode == SnapSync || mode == LightSync {
+		expect = errUnsyncedPeer
+	}
+	if err := tester.sync("peer", nil, mode); !errors.Is(err, expect) {
+		t.Fatalf("block sync error mismatch: have %v, want %v", err, expect)
+	}
+	if mode == SnapSync || mode == LightSync {
+		assertOwnChain(t, tester, 1)
+	} else {
+		assertOwnChain(t, tester, len(chain.blocks))
+	}
+}
+
 // Tests that peers below a pre-configured checkpoint block are prevented from
 // being fast-synced from, avoiding potential cheap eclipse attacks.
 func TestBeaconSync66Full(t *testing.T) { testBeaconSync(t, eth.ETH66, FullSync) }
@@ -1476,4 +1494,3 @@ func testBeaconSync(t *testing.T, protocol uint, mode SyncMode) {
 		})
 	}
 }
-*/

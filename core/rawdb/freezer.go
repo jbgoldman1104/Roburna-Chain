@@ -74,13 +74,12 @@ type Freezer struct {
 	tables       map[string]*freezerTable // Data tables for storing everything
 	instanceLock *flock.Flock             // File-system lock to prevent double opens
 	closeOnce    sync.Once
-	offset       uint64 // Starting BlockNumber in current freezer
 }
 
 // NewChainFreezer is a small utility method around NewFreezer that sets the
 // default parameters for the chain storage.
-func NewChainFreezer(datadir string, namespace string, readonly bool, offset uint64) (*Freezer, error) {
-	return NewFreezer(datadir, namespace, readonly, offset, freezerTableSize, chainFreezerNoSnappy)
+func NewChainFreezer(datadir string, namespace string, readonly bool) (*Freezer, error) {
+	return NewFreezer(datadir, namespace, readonly, freezerTableSize, chainFreezerNoSnappy)
 }
 
 // NewFreezer creates a freezer instance for maintaining immutable ordered
@@ -88,7 +87,7 @@ func NewChainFreezer(datadir string, namespace string, readonly bool, offset uin
 //
 // The 'tables' argument defines the data tables. If the value of a map
 // entry is true, snappy compression is disabled for the table.
-func NewFreezer(datadir string, namespace string, readonly bool, offset uint64, maxTableSize uint32, tables map[string]bool) (*Freezer, error) {
+func NewFreezer(datadir string, namespace string, readonly bool, maxTableSize uint32, tables map[string]bool) (*Freezer, error) {
 	// Create the initial freezer object
 	var (
 		readMeter  = metrics.NewRegisteredMeter(namespace+"ancient/read", nil)
@@ -119,7 +118,6 @@ func NewFreezer(datadir string, namespace string, readonly bool, offset uint64, 
 		readonly:     readonly,
 		tables:       make(map[string]*freezerTable),
 		instanceLock: lock,
-		offset:       offset,
 	}
 
 	// Create the tables.
@@ -151,15 +149,10 @@ func NewFreezer(datadir string, namespace string, readonly bool, offset uint64, 
 		return nil, err
 	}
 
-	// Some blocks in ancientDB may have already been frozen and been pruned, so adding the offset to
-	// reprensent the absolute number of blocks already frozen.
-	freezer.frozen.Add(offset)
-	freezer.tail.Add(offset)
-
 	// Create the write batch.
 	freezer.writeBatch = newFreezerBatch(freezer)
 
-	log.Info("Opened ancient database", "database", datadir, "readonly", readonly, "frozen", freezer.frozen.Load())
+	log.Info("Opened ancient database", "database", datadir, "readonly", readonly)
 	return freezer, nil
 }
 
@@ -189,7 +182,7 @@ func (f *Freezer) Close() error {
 // in the freezer.
 func (f *Freezer) HasAncient(kind string, number uint64) (bool, error) {
 	if table := f.tables[kind]; table != nil {
-		return table.has(number - f.offset), nil
+		return table.has(number), nil
 	}
 	return false, nil
 }
@@ -197,17 +190,16 @@ func (f *Freezer) HasAncient(kind string, number uint64) (bool, error) {
 // Ancient retrieves an ancient binary blob from the append-only immutable files.
 func (f *Freezer) Ancient(kind string, number uint64) ([]byte, error) {
 	if table := f.tables[kind]; table != nil {
-		return table.Retrieve(number - f.offset)
+		return table.Retrieve(number)
 	}
 	return nil, errUnknownTable
 }
 
 // AncientRange retrieves multiple items in sequence, starting from the index 'start'.
 // It will return
-//   - at most 'count' items,
-//   - if maxBytes is specified: at least 1 item (even if exceeding the maxByteSize),
-//     but will otherwise return as many items as fit into maxByteSize.
-//   - if maxBytes is not specified, 'count' items will be returned if they are present.
+//   - at most 'max' items,
+//   - at least 1 item (even if exceeding the maxByteSize), but will otherwise
+//     return as many items as fit into maxByteSize.
 func (f *Freezer) AncientRange(kind string, start, count, maxBytes uint64) ([][]byte, error) {
 	if table := f.tables[kind]; table != nil {
 		return table.RetrieveItems(start, count, maxBytes)
@@ -218,16 +210,6 @@ func (f *Freezer) AncientRange(kind string, start, count, maxBytes uint64) ([][]
 // Ancients returns the length of the frozen items.
 func (f *Freezer) Ancients() (uint64, error) {
 	return f.frozen.Load(), nil
-}
-
-// ItemAmountInAncient returns the actual length of current ancientDB.
-func (f *Freezer) ItemAmountInAncient() (uint64, error) {
-	return f.frozen.Load() - atomic.LoadUint64(&f.offset), nil
-}
-
-// AncientOffSet returns the offset of current ancientDB.
-func (f *Freezer) AncientOffSet() uint64 {
-	return atomic.LoadUint64(&f.offset)
 }
 
 // Tail returns the number of first stored item in the freezer.
@@ -292,46 +274,43 @@ func (f *Freezer) ModifyAncients(fn func(ethdb.AncientWriteOp) error) (writeSize
 }
 
 // TruncateHead discards any recent data above the provided threshold number.
-// It returns the previous head number.
-func (f *Freezer) TruncateHead(items uint64) (uint64, error) {
+func (f *Freezer) TruncateHead(items uint64) error {
 	if f.readonly {
-		return 0, errReadOnly
+		return errReadOnly
 	}
 	f.writeLock.Lock()
 	defer f.writeLock.Unlock()
 
-	oitems := f.frozen.Load()
-	if oitems <= items {
-		return oitems, nil
+	if f.frozen.Load() <= items {
+		return nil
 	}
 	for _, table := range f.tables {
-		if err := table.truncateHead(items - f.offset); err != nil {
-			return 0, err
+		if err := table.truncateHead(items); err != nil {
+			return err
 		}
 	}
 	f.frozen.Store(items)
-	return oitems, nil
+	return nil
 }
 
 // TruncateTail discards any recent data below the provided threshold number.
-func (f *Freezer) TruncateTail(tail uint64) (uint64, error) {
+func (f *Freezer) TruncateTail(tail uint64) error {
 	if f.readonly {
-		return 0, errReadOnly
+		return errReadOnly
 	}
 	f.writeLock.Lock()
 	defer f.writeLock.Unlock()
 
-	old := f.tail.Load()
-	if old >= tail {
-		return old, nil
+	if f.tail.Load() >= tail {
+		return nil
 	}
 	for _, table := range f.tables {
-		if err := table.truncateTail(tail - f.offset); err != nil {
-			return 0, err
+		if err := table.truncateTail(tail); err != nil {
+			return err
 		}
 	}
 	f.tail.Store(tail)
-	return old, nil
+	return nil
 }
 
 // Sync flushes all data tables to disk.
@@ -409,84 +388,6 @@ func (f *Freezer) repair() error {
 	return nil
 }
 
-// delete leveldb data that save to ancientdb, split from func freeze
-func gcKvStore(db ethdb.KeyValueStore, ancients []common.Hash, first uint64, frozen uint64, start time.Time) {
-	// Wipe out all data from the active database
-	batch := db.NewBatch()
-	for i := 0; i < len(ancients); i++ {
-		// Always keep the genesis block in active database
-		if blockNumber := first + uint64(i); blockNumber != 0 {
-			DeleteBlockWithoutNumber(batch, ancients[i], blockNumber)
-			DeleteCanonicalHash(batch, blockNumber)
-		}
-	}
-	if err := batch.Write(); err != nil {
-		log.Crit("Failed to delete frozen canonical blocks", "err", err)
-	}
-	batch.Reset()
-
-	// Wipe out side chains also and track dangling side chians
-	var dangling []common.Hash
-	for number := first; number < frozen; number++ {
-		// Always keep the genesis block in active database
-		if number != 0 {
-			dangling = ReadAllHashes(db, number)
-			for _, hash := range dangling {
-				log.Trace("Deleting side chain", "number", number, "hash", hash)
-				DeleteBlock(batch, hash, number)
-			}
-		}
-	}
-	if err := batch.Write(); err != nil {
-		log.Crit("Failed to delete frozen side blocks", "err", err)
-	}
-	batch.Reset()
-
-	// Step into the future and delete and dangling side chains
-	if frozen > 0 {
-		tip := frozen
-		nfdb := &nofreezedb{KeyValueStore: db}
-		for len(dangling) > 0 {
-			drop := make(map[common.Hash]struct{})
-			for _, hash := range dangling {
-				log.Debug("Dangling parent from freezer", "number", tip-1, "hash", hash)
-				drop[hash] = struct{}{}
-			}
-			children := ReadAllHashes(db, tip)
-			for i := 0; i < len(children); i++ {
-				// Dig up the child and ensure it's dangling
-				child := ReadHeader(nfdb, children[i], tip)
-				if child == nil {
-					log.Error("Missing dangling header", "number", tip, "hash", children[i])
-					continue
-				}
-				if _, ok := drop[child.ParentHash]; !ok {
-					children = append(children[:i], children[i+1:]...)
-					i--
-					continue
-				}
-				// Delete all block data associated with the child
-				log.Debug("Deleting dangling block", "number", tip, "hash", children[i], "parent", child.ParentHash)
-				DeleteBlock(batch, children[i], tip)
-			}
-			dangling = children
-			tip++
-		}
-		if err := batch.Write(); err != nil {
-			log.Crit("Failed to delete dangling side blocks", "err", err)
-		}
-	}
-
-	// Log something friendly for the user
-	context := []interface{}{
-		"blocks", frozen - first, "elapsed", common.PrettyDuration(time.Since(start)), "number", frozen - 1,
-	}
-	if n := len(ancients); n > 0 {
-		context = append(context, []interface{}{"hash", ancients[n-1]}...)
-	}
-	log.Info("Deep froze chain segment", context...)
-}
-
 // convertLegacyFn takes a raw freezer entry in an older format and
 // returns it in the new format.
 type convertLegacyFn = func([]byte) ([]byte, error)
@@ -533,7 +434,7 @@ func (f *Freezer) MigrateTable(kind string, convert convertLegacyFn) error {
 	// TODO(s1na): This is a sanity-check since as of now no process does tail-deletion. But the migration
 	// process assumes no deletion at tail and needs to be modified to account for that.
 	if table.itemOffset.Load() > 0 || table.itemHidden.Load() > 0 {
-		return errors.New("migration not supported for tail-deleted freezers")
+		return fmt.Errorf("migration not supported for tail-deleted freezers")
 	}
 	ancientsPath := filepath.Dir(table.index.Name())
 	// Set up new dir for the migrated table, the content of which
@@ -544,7 +445,7 @@ func (f *Freezer) MigrateTable(kind string, convert convertLegacyFn) error {
 		return err
 	}
 	var (
-		batch  = newTable.newBatch(f.offset)
+		batch  = newTable.newBatch()
 		out    []byte
 		start  = time.Now()
 		logged = time.Now()

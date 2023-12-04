@@ -30,7 +30,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/txpool"
-	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -112,24 +111,21 @@ func newTestBackendWithGenerator(blocks int, shanghai bool, generator func(int, 
 		panic(err)
 	}
 	for _, block := range bs {
-		chain.TrieDB().Commit(block.Root(), false)
+		chain.StateCache().TrieDB().Commit(block.Root(), false)
 	}
-	txconfig := legacypool.DefaultConfig
+	txconfig := txpool.DefaultConfig
 	txconfig.Journal = "" // Don't litter the disk with test journals
-
-	pool := legacypool.New(txconfig, chain)
-	txpool, _ := txpool.New(new(big.Int).SetUint64(txconfig.PriceLimit), chain, []txpool.SubPool{pool})
 
 	return &testBackend{
 		db:     db,
 		chain:  chain,
-		txpool: txpool,
+		txpool: txpool.NewTxPool(txconfig, params.TestChainConfig, chain),
 	}
 }
 
 // close tears down the transaction pool and chain behind the mock backend.
 func (b *testBackend) close() {
-	b.txpool.Close()
+	b.txpool.Stop()
 	b.chain.Stop()
 }
 
@@ -138,7 +134,7 @@ func (b *testBackend) TxPool() TxPool          { return b.txpool }
 
 func (b *testBackend) RunPeer(peer *Peer, handler Handler) error {
 	// Normally the backend would do peer maintenance and handshakes. All that
-	// is omitted, and we will just give control back to the handler.
+	// is omitted and we will just give control back to the handler.
 	return handler(peer)
 }
 func (b *testBackend) PeerInfo(enode.ID) interface{} { panic("not implemented") }
@@ -292,7 +288,7 @@ func testGetBlockHeaders(t *testing.T, protocol uint) {
 				backend.chain.GetBlockByNumber(1).Hash(),
 			},
 		},
-		// Check that non-existing headers aren't returned
+		// Check that non existing headers aren't returned
 		{
 			&GetBlockHeadersPacket{Origin: HashOrNumber{Hash: unknown}, Amount: 1},
 			[]common.Hash{},

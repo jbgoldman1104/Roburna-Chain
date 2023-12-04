@@ -22,7 +22,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common/gopool"
 	natpmp "github.com/jackpal/go-nat-pmp"
 )
 
@@ -45,21 +44,28 @@ func (n *pmp) ExternalIP() (net.IP, error) {
 	return response.ExternalIPAddress[:], nil
 }
 
-func (n *pmp) AddMapping(protocol string, extport, intport int, name string, lifetime time.Duration) (uint16, error) {
+func (n *pmp) AddMapping(protocol string, extport, intport int, name string, lifetime time.Duration) error {
 	if lifetime <= 0 {
-		return 0, fmt.Errorf("lifetime must not be <= 0")
+		return fmt.Errorf("lifetime must not be <= 0")
 	}
 	// Note order of port arguments is switched between our
 	// AddMapping and the client's AddPortMapping.
 	res, err := n.c.AddPortMapping(strings.ToLower(protocol), intport, extport, int(lifetime/time.Second))
 	if err != nil {
-		return 0, err
+		return err
 	}
 
-	// NAT-PMP maps an alternative available port number if the requested port
-	// is already mapped to another address and returns success. Handling of
-	// alternate port numbers is done by the caller.
-	return res.MappedExternalPort, nil
+	// NAT-PMP maps an alternative available port number if the requested
+	// port is already mapped to another address and returns success. In this
+	// case, we return an error because there is no way to return the new port
+	// to the caller.
+	if uint16(extport) != res.MappedExternalPort {
+		// Destroy the mapping in NAT device.
+		n.c.AddPortMapping(strings.ToLower(protocol), intport, 0, 0)
+		return fmt.Errorf("port %d already mapped to another address (%s)", extport, protocol)
+	}
+
+	return nil
 }
 
 func (n *pmp) DeleteMapping(protocol string, extport, intport int) (err error) {
@@ -76,14 +82,14 @@ func discoverPMP() Interface {
 	found := make(chan *pmp, len(gws))
 	for i := range gws {
 		gw := gws[i]
-		gopool.Submit(func() {
+		go func() {
 			c := natpmp.NewClient(gw)
 			if _, err := c.GetExternalAddress(); err != nil {
 				found <- nil
 			} else {
 				found <- &pmp{gw, c}
 			}
-		})
+		}()
 	}
 	// return the one that responds first.
 	// discovery needs to be quick, so we stop caring about

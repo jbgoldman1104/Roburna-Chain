@@ -139,7 +139,7 @@ var (
 	// This is the version of Go that will be downloaded by
 	//
 	//     go run ci.go install -dlgo
-	dlgoVersion = "1.20.7"
+	dlgoVersion = "1.20.3"
 
 	// This is the version of Go that will be used to bootstrap the PPA builder.
 	//
@@ -198,10 +198,8 @@ func doInstall(cmdline []string) {
 		arch       = flag.String("arch", "", "Architecture to cross build for")
 		cc         = flag.String("cc", "", "C compiler to cross build with")
 		staticlink = flag.Bool("static", false, "Create statically-linked executable")
-		output     = flag.String("o", "", "Output directory for build artifacts")
 	)
 	flag.CommandLine.Parse(cmdline)
-	env := build.Env()
 
 	// Configure the toolchain.
 	tc := build.GoToolchain{GOARCH: *arch, CC: *cc}
@@ -213,12 +211,8 @@ func doInstall(cmdline []string) {
 	// Disable CLI markdown doc generation in release builds.
 	buildTags := []string{"urfave_cli_no_docs"}
 
-	// Enable linking the CKZG library since we can make it work with additional flags.
-	if env.UbuntuVersion != "trusty" {
-		buildTags = append(buildTags, "ckzg")
-	}
-
 	// Configure the build.
+	env := build.Env()
 	gobuild := tc.Go("build", buildFlags(env, *staticlink, buildTags)...)
 
 	// arm64 CI builders are memory-constrained and can't handle concurrent builds,
@@ -227,6 +221,7 @@ func doInstall(cmdline []string) {
 	if env.CI && runtime.GOARCH == "arm64" {
 		gobuild.Args = append(gobuild.Args, "-p", "1")
 	}
+
 	// We use -trimpath to avoid leaking local paths into the built executables.
 	gobuild.Args = append(gobuild.Args, "-trimpath")
 
@@ -244,11 +239,7 @@ func doInstall(cmdline []string) {
 	for _, pkg := range packages {
 		args := make([]string, len(gobuild.Args))
 		copy(args, gobuild.Args)
-		outputPath := executablePath(path.Base(pkg))
-		if output != nil && *output != "" {
-			outputPath = *output
-		}
-		args = append(args, "-o", outputPath)
+		args = append(args, "-o", executablePath(path.Base(pkg)))
 		args = append(args, pkg)
 		build.MustRun(&exec.Cmd{Path: gobuild.Path, Args: args, Env: gobuild.Env})
 	}
@@ -298,7 +289,6 @@ func doTest(cmdline []string) {
 		cc       = flag.String("cc", "", "Sets C compiler binary")
 		coverage = flag.Bool("coverage", false, "Whether to record code coverage")
 		verbose  = flag.Bool("v", false, "Whether to log verbosely")
-		timeout  = flag.String("timeout", "10m", `Timeout of runing tests`)
 		race     = flag.Bool("race", false, "Execute the race detector")
 	)
 	flag.CommandLine.Parse(cmdline)
@@ -311,12 +301,6 @@ func doTest(cmdline []string) {
 	}
 	gotest := tc.Go("test")
 
-	// CI needs a bit more time for the statetests (default 10m).
-	gotest.Args = append(gotest.Args, "-timeout=20m")
-
-	// Enable CKZG backend in CI.
-	gotest.Args = append(gotest.Args, "-tags=ckzg")
-
 	// Test a single package at a time. CI builders are slow
 	// and some tests run into timeouts under load.
 	gotest.Args = append(gotest.Args, "-p", "1")
@@ -325,9 +309,6 @@ func doTest(cmdline []string) {
 	}
 	if *verbose {
 		gotest.Args = append(gotest.Args, "-v")
-	}
-	if *timeout != "" {
-		gotest.Args = append(gotest.Args, []string{"-timeout", *timeout}...)
 	}
 	if *race {
 		gotest.Args = append(gotest.Args, "-race")
@@ -360,7 +341,7 @@ func doLint(cmdline []string) {
 
 // downloadLinter downloads and unpacks golangci-lint.
 func downloadLinter(cachedir string) string {
-	const version = "1.52.2"
+	const version = "1.51.1"
 
 	csdb := build.MustLoadChecksums("build/checksums.txt")
 	arch := runtime.GOARCH

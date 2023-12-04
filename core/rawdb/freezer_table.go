@@ -145,20 +145,12 @@ func newTable(path string, name string, readMeter metrics.Meter, writeMeter metr
 		meta  *os.File
 	)
 	if readonly {
-		// Will fail if table doesn't exist
+		// Will fail if table index file or meta file is not existent
 		index, err = openFreezerFileForReadOnly(filepath.Join(path, idxName))
 		if err != nil {
 			return nil, err
 		}
-		// TODO(rjl493456442) change it to read-only mode. Open the metadata file
-		// in rw mode. It's a temporary solution for now and should be changed
-		// whenever the tail deletion is actually used. The reason for this hack is
-		// the additional meta file for each freezer table is added in order to support
-		// tail deletion, but for most legacy nodes this file is missing. This check
-		// will suddenly break lots of database relevant commands. So the metadata file
-		// is always opened for mutation and nothing else will be written except
-		// the initialization.
-		meta, err = openFreezerFileForAppend(filepath.Join(path, fmt.Sprintf("%s.meta", name)))
+		meta, err = openFreezerFileForReadOnly(filepath.Join(path, fmt.Sprintf("%s.meta", name)))
 		if err != nil {
 			return nil, err
 		}
@@ -220,9 +212,6 @@ func (t *freezerTable) repair() error {
 	}
 	// Ensure the index is a multiple of indexEntrySize bytes
 	if overflow := stat.Size() % indexEntrySize; overflow != 0 {
-		if t.readonly {
-			return fmt.Errorf("index file(path: %s, name: %s) size is not a multiple of %d", t.path, t.name, indexEntrySize)
-		}
 		truncateFreezerFile(t.index, stat.Size()-overflow) // New file can't trigger this path
 	}
 	// Retrieve the file sizes and prepare for truncation
@@ -281,9 +270,6 @@ func (t *freezerTable) repair() error {
 	// Keep truncating both files until they come in sync
 	contentExp = int64(lastIndex.offset)
 	for contentExp != contentSize {
-		if t.readonly {
-			return fmt.Errorf("freezer table(path: %s, name: %s, num: %d) is corrupted", t.path, t.name, lastIndex.filenum)
-		}
 		verbose = true
 		// Truncate the head file to the last offset pointer
 		if contentExp < contentSize {
@@ -726,7 +712,7 @@ func (t *freezerTable) RetrieveItems(start, count, maxBytes uint64) ([][]byte, e
 		if !t.noCompression {
 			decompressedSize, _ = snappy.DecodedLen(item)
 		}
-		if i > 0 && maxBytes != 0 && uint64(outputSize+decompressedSize) > maxBytes {
+		if i > 0 && uint64(outputSize+decompressedSize) > maxBytes {
 			break
 		}
 		if !t.noCompression {
@@ -744,10 +730,8 @@ func (t *freezerTable) RetrieveItems(start, count, maxBytes uint64) ([][]byte, e
 }
 
 // retrieveItems reads up to 'count' items from the table. It reads at least
-// one item, but otherwise avoids reading more than maxBytes bytes. Freezer
-// will ignore the size limitation and continuously allocate memory to store
-// data if maxBytes is 0. It returns the (potentially compressed) data, and
-// the sizes.
+// one item, but otherwise avoids reading more than maxBytes bytes.
+// It returns the (potentially compressed) data, and the sizes.
 func (t *freezerTable) retrieveItems(start, count, maxBytes uint64) ([]byte, []int, error) {
 	t.lock.RLock()
 	defer t.lock.RUnlock()
@@ -768,22 +752,25 @@ func (t *freezerTable) retrieveItems(start, count, maxBytes uint64) ([]byte, []i
 	if start+count > items {
 		count = items - start
 	}
-	var output []byte // Buffer to read data into
-	if maxBytes != 0 {
-		output = make([]byte, 0, maxBytes)
-	} else {
-		output = make([]byte, 0, 1024) // initial buffer cap
-	}
+	var (
+		output     = make([]byte, maxBytes) // Buffer to read data into
+		outputSize int                      // Used size of that buffer
+	)
 	// readData is a helper method to read a single data item from disk.
 	readData := func(fileId, start uint32, length int) error {
-		output = grow(output, length)
+		// In case a small limit is used, and the elements are large, may need to
+		// realloc the read-buffer when reading the first (and only) item.
+		if len(output) < length {
+			output = make([]byte, length)
+		}
 		dataFile, exist := t.files[fileId]
 		if !exist {
 			return fmt.Errorf("missing data file %d", fileId)
 		}
-		if _, err := dataFile.ReadAt(output[len(output)-length:], int64(start)); err != nil {
+		if _, err := dataFile.ReadAt(output[outputSize:outputSize+length], int64(start)); err != nil {
 			return err
 		}
+		outputSize += length
 		return nil
 	}
 	// Read all the indexes in one go
@@ -814,7 +801,7 @@ func (t *freezerTable) retrieveItems(start, count, maxBytes uint64) ([]byte, []i
 			}
 			readStart = 0
 		}
-		if i > 0 && uint64(totalSize+size) > maxBytes && maxBytes != 0 {
+		if i > 0 && uint64(totalSize+size) > maxBytes {
 			// About to break out due to byte limit being exceeded. We don't
 			// read this last item, but we need to do the deferred reads now.
 			if unreadSize > 0 {
@@ -828,7 +815,7 @@ func (t *freezerTable) retrieveItems(start, count, maxBytes uint64) ([]byte, []i
 		unreadSize += size
 		totalSize += size
 		sizes = append(sizes, size)
-		if i == len(indices)-2 || (uint64(totalSize) > maxBytes && maxBytes != 0) {
+		if i == len(indices)-2 || uint64(totalSize) > maxBytes {
 			// Last item, need to do the read now
 			if err := readData(secondIndex.filenum, readStart, unreadSize); err != nil {
 				return nil, nil, err
@@ -839,7 +826,7 @@ func (t *freezerTable) retrieveItems(start, count, maxBytes uint64) ([]byte, []i
 
 	// Update metrics.
 	t.readMeter.Mark(int64(totalSize))
-	return output, sizes, nil
+	return output[:outputSize], sizes, nil
 }
 
 // has returns an indicator whether the specified number data is still accessible
@@ -954,34 +941,4 @@ func (t *freezerTable) dumpIndex(w io.Writer, start, stop int64) {
 		}
 	}
 	fmt.Fprintf(w, "|--------------------------|\n")
-}
-
-func (t *freezerTable) ResetItemsOffset(virtualTail uint64) error {
-	stat, err := t.index.Stat()
-	if err != nil {
-		return err
-	}
-
-	if stat.Size() == 0 {
-		return fmt.Errorf("Stat size is zero when ResetVirtualTail.")
-	}
-
-	var firstIndex indexEntry
-
-	buffer := make([]byte, indexEntrySize)
-
-	t.index.ReadAt(buffer, 0)
-	firstIndex.unmarshalBinary(buffer)
-
-	firstIndex.offset = uint32(virtualTail)
-	t.index.WriteAt(firstIndex.append(nil), 0)
-
-	var firstIndex2 indexEntry
-	buffer2 := make([]byte, indexEntrySize)
-	t.index.ReadAt(buffer2, 0)
-	firstIndex2.unmarshalBinary(buffer2)
-
-	log.Info("Reset Index", "filenum", t.index.Name(), "offset", firstIndex2.offset)
-
-	return nil
 }

@@ -74,16 +74,6 @@ func (t *table) Ancients() (uint64, error) {
 	return t.db.Ancients()
 }
 
-// ItemAmountInAncient returns the actual length of current ancientDB.
-func (t *table) ItemAmountInAncient() (uint64, error) {
-	return t.db.ItemAmountInAncient()
-}
-
-// AncientOffSet returns the offset of current ancientDB.
-func (t *table) AncientOffSet() uint64 {
-	return t.db.AncientOffSet()
-}
-
 // Tail is a noop passthrough that just forwards the request to the underlying
 // database.
 func (t *table) Tail() (uint64, error) {
@@ -107,13 +97,13 @@ func (t *table) ReadAncients(fn func(reader ethdb.AncientReaderOp) error) (err e
 
 // TruncateHead is a noop passthrough that just forwards the request to the underlying
 // database.
-func (t *table) TruncateHead(items uint64) (uint64, error) {
+func (t *table) TruncateHead(items uint64) error {
 	return t.db.TruncateHead(items)
 }
 
 // TruncateTail is a noop passthrough that just forwards the request to the underlying
 // database.
-func (t *table) TruncateTail(items uint64) (uint64, error) {
+func (t *table) TruncateTail(items uint64) error {
 	return t.db.TruncateTail(items)
 }
 
@@ -203,14 +193,6 @@ func (t *table) Compact(start []byte, limit []byte) error {
 // pre-configured string.
 func (t *table) NewBatch() ethdb.Batch {
 	return &tableBatch{t.db.NewBatch(), t.prefix}
-}
-
-func (t *table) DiffStore() ethdb.KeyValueStore {
-	return nil
-}
-
-func (t *table) SetDiffStore(diff ethdb.KeyValueStore) {
-	panic("not implement")
 }
 
 // NewBatchWithSize creates a write-only database batch with pre-allocated buffer.

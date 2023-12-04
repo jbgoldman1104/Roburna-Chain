@@ -29,7 +29,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common/gopool"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/discover/v4wire"
@@ -42,7 +41,7 @@ var (
 	errExpired          = errors.New("expired")
 	errUnsolicitedReply = errors.New("unsolicited reply")
 	errUnknownNode      = errors.New("unknown node")
-	errTimeout          = errors.New("udp timeout")
+	errTimeout          = errors.New("RPC timeout")
 	errClockWarp        = errors.New("reply deadline too far in the future")
 	errClosed           = errors.New("socket closed")
 	errLowPort          = errors.New("low port")
@@ -131,7 +130,7 @@ func ListenV4(c UDPConn, ln *enode.LocalNode, cfg Config) (*UDPv4, error) {
 	cfg = cfg.withDefaults()
 	closeCtx, cancel := context.WithCancel(context.Background())
 	t := &UDPv4{
-		conn:            newMeteredConn(c),
+		conn:            c,
 		priv:            cfg.PrivateKey,
 		netrestrict:     cfg.NetRestrict,
 		localNode:       ln,
@@ -143,7 +142,7 @@ func ListenV4(c UDPConn, ln *enode.LocalNode, cfg Config) (*UDPv4, error) {
 		log:             cfg.Log,
 	}
 
-	tab, err := newMeteredTable(t, ln.Database(), cfg)
+	tab, err := newTable(t, ln.Database(), cfg.Bootnodes, t.log)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +410,6 @@ func (t *UDPv4) loop() {
 	var (
 		plist        = list.New()
 		timeout      = time.NewTimer(0)
-		statusTicker = time.NewTicker(60 * time.Second)
 		nextTimeout  *replyMatcher // head of plist when timeout was last reset
 		contTimeouts = 0           // number of continuous timeouts to do NTP checks
 		ntpWarnTime  = time.Unix(0, 0)
@@ -439,10 +437,6 @@ func (t *UDPv4) loop() {
 		}
 		nextTimeout = nil
 		timeout.Stop()
-	}
-
-	logStatistic := func() {
-		t.log.Info("Current status", "table_size", t.tab.len(), "pending_size", plist.Len(), "db_size", t.db.Size())
 	}
 
 	for {
@@ -494,15 +488,10 @@ func (t *UDPv4) loop() {
 			if contTimeouts > ntpFailureThreshold {
 				if time.Since(ntpWarnTime) >= ntpWarningCooldown {
 					ntpWarnTime = time.Now()
-					gopool.Submit(func() {
-						checkClockDrift()
-					})
+					go checkClockDrift()
 				}
 				contTimeouts = 0
 			}
-
-		case <-statusTicker.C:
-			logStatistic()
 		}
 	}
 }
@@ -654,12 +643,12 @@ type packetHandlerV4 struct {
 func (t *UDPv4) verifyPing(h *packetHandlerV4, from *net.UDPAddr, fromID enode.ID, fromKey v4wire.Pubkey) error {
 	req := h.Packet.(*v4wire.Ping)
 
-	if v4wire.Expired(req.Expiration) {
-		return errExpired
-	}
 	senderKey, err := v4wire.DecodePubkey(crypto.S256(), fromKey)
 	if err != nil {
 		return err
+	}
+	if v4wire.Expired(req.Expiration) {
+		return errExpired
 	}
 	h.senderKey = senderKey
 	return nil

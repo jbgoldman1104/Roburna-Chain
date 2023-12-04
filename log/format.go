@@ -16,12 +16,9 @@ import (
 	"github.com/holiman/uint256"
 )
 
-var (
-	timeFormat     = "2006-01-02T15:04:05-0700"
-	termTimeFormat = "01-02|15:04:05.000"
-)
-
 const (
+	timeFormat        = "2006-01-02T15:04:05-0700"
+	termTimeFormat    = "01-02|15:04:05.000"
 	floatFormat       = 'f'
 	termMsgJust       = 40
 	termCtxMaxPadding = 40
@@ -35,16 +32,20 @@ var locationTrims = []string{
 // PrintOrigins sets or unsets log location (file:line) printing for terminal
 // format output.
 func PrintOrigins(print bool) {
-	locationEnabled.Store(print)
+	if print {
+		atomic.StoreUint32(&locationEnabled, 1)
+	} else {
+		atomic.StoreUint32(&locationEnabled, 0)
+	}
 }
 
 // locationEnabled is an atomic flag controlling whether the terminal formatter
 // should append the log locations too when printing entries.
-var locationEnabled atomic.Bool
+var locationEnabled uint32
 
 // locationLength is the maxmimum path length encountered, which all logs are
 // padded to to aid in alignment.
-var locationLength atomic.Uint32
+var locationLength uint32
 
 // fieldPadding is a global map with maximum field value lengths seen until now
 // to allow padding log contexts in a bit smarter way.
@@ -108,17 +109,17 @@ func TerminalFormat(usecolor bool) Format {
 
 		b := &bytes.Buffer{}
 		lvl := r.Lvl.AlignedString()
-		if locationEnabled.Load() {
+		if atomic.LoadUint32(&locationEnabled) != 0 {
 			// Log origin printing was requested, format the location path and line number
 			location := fmt.Sprintf("%+v", r.Call)
 			for _, prefix := range locationTrims {
 				location = strings.TrimPrefix(location, prefix)
 			}
 			// Maintain the maximum location length for fancyer alignment
-			align := int(locationLength.Load())
+			align := int(atomic.LoadUint32(&locationLength))
 			if align < len(location) {
 				align = len(location)
-				locationLength.Store(uint32(align))
+				atomic.StoreUint32(&locationLength, uint32(align))
 			}
 			padding := strings.Repeat(" ", align-len(location))
 
@@ -168,7 +169,7 @@ func logfmt(buf *bytes.Buffer, ctx []interface{}, color int, term bool) {
 		k, ok := ctx[i].(string)
 		v := formatLogfmtValue(ctx[i+1], term)
 		if !ok {
-			k, v = errorKey, fmt.Sprintf("%+T is not a string key", ctx[i])
+			k, v = errorKey, formatLogfmtValue(k, term)
 		} else {
 			k = escapeString(k)
 		}
@@ -217,20 +218,20 @@ func JSONFormatOrderedEx(pretty, lineSeparated bool) Format {
 		}
 	}
 	return FormatFunc(func(r *Record) []byte {
-		props := map[string]interface{}{
-			r.KeyNames.Time: r.Time,
-			r.KeyNames.Lvl:  r.Lvl.String(),
-			r.KeyNames.Msg:  r.Msg,
-		}
+		props := make(map[string]interface{})
+
+		props[r.KeyNames.Time] = r.Time
+		props[r.KeyNames.Lvl] = r.Lvl.String()
+		props[r.KeyNames.Msg] = r.Msg
 
 		ctx := make([]string, len(r.Ctx))
 		for i := 0; i < len(r.Ctx); i += 2 {
-			if k, ok := r.Ctx[i].(string); ok {
-				ctx[i] = k
-				ctx[i+1] = formatLogfmtValue(r.Ctx[i+1], true)
-			} else {
-				props[errorKey] = fmt.Sprintf("%+T is not a string key,", r.Ctx[i])
+			k, ok := r.Ctx[i].(string)
+			if !ok {
+				props[errorKey] = fmt.Sprintf("%+v is not a string key,", r.Ctx[i])
 			}
+			ctx[i] = k
+			ctx[i+1] = formatLogfmtValue(r.Ctx[i+1], true)
 		}
 		props[r.KeyNames.Ctx] = ctx
 
@@ -260,19 +261,18 @@ func JSONFormatEx(pretty, lineSeparated bool) Format {
 	}
 
 	return FormatFunc(func(r *Record) []byte {
-		props := map[string]interface{}{
-			r.KeyNames.Time: r.Time,
-			r.KeyNames.Lvl:  r.Lvl.String(),
-			r.KeyNames.Msg:  r.Msg,
-		}
+		props := make(map[string]interface{})
+
+		props[r.KeyNames.Time] = r.Time
+		props[r.KeyNames.Lvl] = r.Lvl.String()
+		props[r.KeyNames.Msg] = r.Msg
 
 		for i := 0; i < len(r.Ctx); i += 2 {
 			k, ok := r.Ctx[i].(string)
 			if !ok {
-				props[errorKey] = fmt.Sprintf("%+T is not a string key", r.Ctx[i])
-			} else {
-				props[k] = formatJSONValue(r.Ctx[i+1])
+				props[errorKey] = fmt.Sprintf("%+v is not a string key", r.Ctx[i])
 			}
+			props[k] = formatJSONValue(r.Ctx[i+1])
 		}
 
 		b, err := jsonMarshal(props)
@@ -524,14 +524,6 @@ func escapeString(s string) string {
 		return s
 	}
 	return strconv.Quote(s)
-}
-
-func SetTermTimeFormat(format string) {
-	termTimeFormat = format
-}
-
-func SetTimeFormat(format string) {
-	timeFormat = format
 }
 
 // escapeMessage checks if the provided string needs escaping/quoting, similarly

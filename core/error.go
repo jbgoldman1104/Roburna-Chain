@@ -33,15 +33,6 @@ var (
 	ErrNoGenesis = errors.New("genesis not found in chain")
 
 	errSideChainReceipts = errors.New("side blocks can't be accepted as ancient chain data")
-
-	// ErrAncestorHasNotBeenVerified is returned when block - 11 has not been verified by the remote verifier.
-	ErrAncestorHasNotBeenVerified = errors.New("block ancestor has not been verified")
-
-	// ErrCurrentBlockNotFound is returned when current block not found.
-	ErrCurrentBlockNotFound = errors.New("current block not found")
-
-	// ErrKnownBadBlock is return when the block is a known bad block
-	ErrKnownBadBlock = errors.New("already known bad block")
 )
 
 // List of evm-call-message pre-checking errors. All state transition messages will
@@ -109,8 +100,4 @@ var (
 
 	// ErrSenderNoEOA is returned if the sender of a transaction is a contract.
 	ErrSenderNoEOA = errors.New("sender not an eoa")
-
-	// ErrBlobFeeCapTooLow is returned if the transaction fee cap is less than the
-	// blob gas fee of the block.
-	ErrBlobFeeCapTooLow = errors.New("max fee per blob gas less than block blob gas fee")
 )

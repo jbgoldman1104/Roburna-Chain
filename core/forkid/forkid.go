@@ -24,13 +24,13 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -96,32 +96,6 @@ func NewID(config *params.ChainConfig, genesis common.Hash, head, time uint64) I
 		return ID{Hash: checksumToBytes(hash), Next: fork}
 	}
 	return ID{Hash: checksumToBytes(hash), Next: 0}
-}
-
-// NextForkHash calculates the forkHash from genesis to the next fork block number or time
-func NextForkHash(config *params.ChainConfig, genesis common.Hash, head uint64, time uint64) [4]byte {
-	// Calculate the starting checksum from the genesis hash
-	hash := crc32.ChecksumIEEE(genesis[:])
-
-	// Calculate the next fork checksum
-	forksByBlock, forksByTime := gatherForks(config)
-	for _, fork := range forksByBlock {
-		if fork > head {
-			// Checksum the previous hash and nextFork number and return
-			return checksumToBytes(checksumUpdate(hash, fork))
-		}
-		// Fork already passed, checksum the previous hash and the fork number
-		hash = checksumUpdate(hash, fork)
-	}
-	for _, fork := range forksByTime {
-		if fork > time {
-			// Checksum the previous hash and nextFork time and return
-			return checksumToBytes(checksumUpdate(hash, fork))
-		}
-		// Fork already passed, checksum the previous hash and the fork time
-		hash = checksumUpdate(hash, fork)
-	}
-	return checksumToBytes(hash)
 }
 
 // NewIDWithChain calculates the Ethereum fork ID from an existing chain instance.
@@ -296,8 +270,8 @@ func gatherForks(config *params.ChainConfig) ([]uint64, []uint64) {
 			}
 		}
 	}
-	slices.Sort(forksByBlock)
-	slices.Sort(forksByTime)
+	sort.Slice(forksByBlock, func(i, j int) bool { return forksByBlock[i] < forksByBlock[j] })
+	sort.Slice(forksByTime, func(i, j int) bool { return forksByTime[i] < forksByTime[j] })
 
 	// Deduplicate fork identifiers applying multiple forks
 	for i := 1; i < len(forksByBlock); i++ {

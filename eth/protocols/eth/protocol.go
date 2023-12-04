@@ -45,7 +45,7 @@ var ProtocolVersions = []uint{ETH68, ETH67, ETH66}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{ETH68: 17, ETH67: 18, ETH66: 17}
+var protocolLengths = map[uint]uint64{ETH68: 17, ETH67: 17, ETH66: 17}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024
@@ -59,14 +59,13 @@ const (
 	GetBlockBodiesMsg             = 0x05
 	BlockBodiesMsg                = 0x06
 	NewBlockMsg                   = 0x07
-	NewPooledTransactionHashesMsg = 0x08
-	GetPooledTransactionsMsg      = 0x09
-	PooledTransactionsMsg         = 0x0a
-	UpgradeStatusMsg              = 0x0b // Protocol messages overloaded in eth/66
 	GetNodeDataMsg                = 0x0d
 	NodeDataMsg                   = 0x0e
 	GetReceiptsMsg                = 0x0f
 	ReceiptsMsg                   = 0x10
+	NewPooledTransactionHashesMsg = 0x08
+	GetPooledTransactionsMsg      = 0x09
+	PooledTransactionsMsg         = 0x0a
 )
 
 var (
@@ -94,35 +93,6 @@ type StatusPacket struct {
 	Head            common.Hash
 	Genesis         common.Hash
 	ForkID          forkid.ID
-}
-
-type UpgradeStatusExtension struct {
-	DisablePeerTxBroadcast bool
-}
-
-func (e *UpgradeStatusExtension) Encode() (*rlp.RawValue, error) {
-	rawBytes, err := rlp.EncodeToBytes(e)
-	if err != nil {
-		return nil, err
-	}
-	raw := rlp.RawValue(rawBytes)
-	return &raw, nil
-}
-
-type UpgradeStatusPacket struct {
-	Extension *rlp.RawValue `rlp:"nil"`
-}
-
-func (p *UpgradeStatusPacket) GetExtension() (*UpgradeStatusExtension, error) {
-	extension := &UpgradeStatusExtension{}
-	if p.Extension == nil {
-		return extension, nil
-	}
-	err := rlp.DecodeBytes(*p.Extension, extension)
-	if err != nil {
-		return nil, err
-	}
-	return extension, nil
 }
 
 // NewBlockHashesPacket is the network packet for the block announcements.
@@ -372,9 +342,6 @@ type PooledTransactionsRLPPacket66 struct {
 func (*StatusPacket) Name() string { return "Status" }
 func (*StatusPacket) Kind() byte   { return StatusMsg }
 
-func (*UpgradeStatusPacket) Name() string { return "UpgradeStatus" }
-func (*UpgradeStatusPacket) Kind() byte   { return UpgradeStatusMsg }
-
 func (*NewBlockHashesPacket) Name() string { return "NewBlockHashes" }
 func (*NewBlockHashesPacket) Kind() byte   { return NewBlockHashesMsg }
 
@@ -396,17 +363,6 @@ func (*BlockBodiesPacket) Kind() byte   { return BlockBodiesMsg }
 func (*NewBlockPacket) Name() string { return "NewBlock" }
 func (*NewBlockPacket) Kind() byte   { return NewBlockMsg }
 
-func (*NewPooledTransactionHashesPacket66) Name() string { return "NewPooledTransactionHashes" }
-func (*NewPooledTransactionHashesPacket66) Kind() byte   { return NewPooledTransactionHashesMsg }
-func (*NewPooledTransactionHashesPacket68) Name() string { return "NewPooledTransactionHashes" }
-func (*NewPooledTransactionHashesPacket68) Kind() byte   { return NewPooledTransactionHashesMsg }
-
-func (*GetPooledTransactionsPacket) Name() string { return "GetPooledTransactions" }
-func (*GetPooledTransactionsPacket) Kind() byte   { return GetPooledTransactionsMsg }
-
-func (*PooledTransactionsPacket) Name() string { return "PooledTransactions" }
-func (*PooledTransactionsPacket) Kind() byte   { return PooledTransactionsMsg }
-
 func (*GetNodeDataPacket) Name() string { return "GetNodeData" }
 func (*GetNodeDataPacket) Kind() byte   { return GetNodeDataMsg }
 
@@ -418,3 +374,15 @@ func (*GetReceiptsPacket) Kind() byte   { return GetReceiptsMsg }
 
 func (*ReceiptsPacket) Name() string { return "Receipts" }
 func (*ReceiptsPacket) Kind() byte   { return ReceiptsMsg }
+
+func (*NewPooledTransactionHashesPacket66) Name() string { return "NewPooledTransactionHashes" }
+func (*NewPooledTransactionHashesPacket66) Kind() byte   { return NewPooledTransactionHashesMsg }
+
+func (*NewPooledTransactionHashesPacket68) Name() string { return "NewPooledTransactionHashes" }
+func (*NewPooledTransactionHashesPacket68) Kind() byte   { return NewPooledTransactionHashesMsg }
+
+func (*GetPooledTransactionsPacket) Name() string { return "GetPooledTransactions" }
+func (*GetPooledTransactionsPacket) Kind() byte   { return GetPooledTransactionsMsg }
+
+func (*PooledTransactionsPacket) Name() string { return "PooledTransactions" }
+func (*PooledTransactionsPacket) Kind() byte   { return PooledTransactionsMsg }
