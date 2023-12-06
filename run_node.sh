@@ -29,6 +29,8 @@ geth --datadir /root/Roburna-Chain/data/testnet/node --syncmode full --config /r
 
 geth --datadir /root/Roburna-Chain/data/testnet/node --syncmode full --config /root/Roburna-Chain/data/testnet/config/config.toml --unlock 0xDa103442F4C60ac7629B74a2Ab186C44aba64A5C  --password ./password.txt --authrpc.port 8555 
 
+geth --datadir /root/Roburna-Chain/data/testnet/node --syncmode full --config /root/Roburna-Chain/data/testnet/config/config2.toml --unlock 0xD4BcCE223eF1cB76Aa37c63AF3132E756dd678F8  --password ./password.txt --authrpc.port 8555 
+
 
 
 
